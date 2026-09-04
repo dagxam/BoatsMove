@@ -45,7 +45,7 @@ public final class ShipMovementController {
     }
 
     public void remove(ShipModel ship) {
-        registry.unregister(ship.id());
+        registry.removeRuntime(ship.id());
     }
 
     public void stop() {
