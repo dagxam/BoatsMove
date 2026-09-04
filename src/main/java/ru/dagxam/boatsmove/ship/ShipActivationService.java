@@ -15,18 +15,16 @@ public final class ShipActivationService {
     private final ShipRegistry registry;
     private final ShipStructureScanner scanner = new ShipStructureScanner();
     private final ShipDisplayManager displayManager;
-    private final VirtualChestManager storageManager;
     private final int minBlocks;
     private final int maxBlocks;
     private final Set<Material> forbidden;
     private final int maxActiveShips;
 
     public ShipActivationService(ShipRegistry registry, ShipDisplayManager displayManager,
-                                 VirtualChestManager storageManager, int minBlocks, int maxBlocks,
-                                 Set<Material> forbidden, int maxActiveShips) {
+                                 int minBlocks, int maxBlocks, Set<Material> forbidden,
+                                 int maxActiveShips) {
         this.registry = registry;
         this.displayManager = displayManager;
-        this.storageManager = storageManager;
         this.minBlocks = minBlocks;
         this.maxBlocks = maxBlocks;
         this.forbidden = Set.copyOf(forbidden);
@@ -34,26 +32,18 @@ public final class ShipActivationService {
     }
 
     public Result activate(Player player, Block control) {
-        if (player == null || control == null) {
-            return Result.failure("Не удалось определить игрока или контрольный блок.");
-        }
-        if (registry.size() >= maxActiveShips) {
-            return Result.failure("Достигнут лимит активных кораблей: " + maxActiveShips + ".");
-        }
+        if (player == null || control == null) return Result.failure("Не удалось определить игрока или контрольный блок.");
+        if (registry.size() >= maxActiveShips) return Result.failure("Достигнут лимит активных кораблей: " + maxActiveShips + ".");
 
         ShipStructureScanner.Result scan = scanner.scan(control, minBlocks, maxBlocks, forbidden);
         if (!scan.success()) return Result.failure(scan.error());
 
         ShipStructureScanner.ShipSnapshot snapshot = scan.snapshot();
-        if (!snapshot.world().equals(control.getWorld())) {
-            return Result.failure("Мир контрольного блока изменился во время активации.");
-        }
+        if (!snapshot.world().equals(control.getWorld())) return Result.failure("Мир контрольного блока изменился во время активации.");
 
-        UUID ownerId = player.getUniqueId();
-        ShipModel ship = new ShipModel(snapshot.id(), ownerId, snapshot.world(), snapshot.origin(), snapshot.blocks());
+        ShipModel ship = new ShipModel(snapshot.id(), player.getUniqueId(), snapshot.world(), snapshot.origin(), snapshot.blocks());
         ship.state(ShipState.ACTIVATING);
 
-        // Re-check exact source blocks before changing the world.
         for (ShipBlock block : snapshot.blocks()) {
             Block worldBlock = worldBlock(snapshot, block);
             if (!worldBlock.getBlockData().matches(block.blockData())) {
@@ -81,11 +71,7 @@ public final class ShipActivationService {
 
     private Block worldBlock(ShipStructureScanner.ShipSnapshot snapshot, ShipBlock block) {
         World world = snapshot.world();
-        return world.getBlockAt(
-                snapshot.origin().getBlockX() + block.x(),
-                snapshot.origin().getBlockY() + block.y(),
-                snapshot.origin().getBlockZ() + block.z()
-        );
+        return world.getBlockAt(snapshot.origin().getBlockX() + block.x(), snapshot.origin().getBlockY() + block.y(), snapshot.origin().getBlockZ() + block.z());
     }
 
     private void rollback(ShipStructureScanner.ShipSnapshot snapshot, Set<ShipBlock> removed) {
@@ -103,14 +89,10 @@ public final class ShipActivationService {
     }
 
     public Result deactivate(ShipModel ship) {
-        if (ship == null || ship.state() != ShipState.ACTIVE) {
-            return Result.failure("Корабль не активен.");
-        }
+        if (ship == null || ship.state() != ShipState.ACTIVE) return Result.failure("Корабль не активен.");
 
         ShipRuntimeState runtime = registry.runtime(ship.id());
-        if (runtime == null) {
-            return Result.failure("Не найдено состояние активного корабля.");
-        }
+        if (runtime == null) return Result.failure("Не найдено состояние активного корабля.");
 
         World world = displayWorld(ship);
         if (world == null) {
@@ -119,20 +101,33 @@ public final class ShipActivationService {
         }
 
         ship.state(ShipState.DEACTIVATING);
-        // Flush first: players may still have a virtual inventory open.
-        storageManager.flushShip(ship.id());
-        storageManager.closeShip(ship.id());
+        VirtualChestManager storage = registry.storageManager();
+        if (storage != null) {
+            storage.flushShip(ship.id());
+            storage.closeShip(ship.id());
+        }
         displayManager.remove(ship.id());
 
         var current = runtime.position();
         try {
-            storageManager.restoreShip(ship, world, current);
+            if (storage != null) storage.restoreShip(ship, world, current);
+            else restoreBlocksOnly(ship, world, current);
             ship.state(ShipState.BUILT);
             registry.unregister(ship.id());
             return new Result(true, "Корабль деактивирован в текущей позиции и восстановлен как блоки.", ship);
         } catch (RuntimeException ex) {
             ship.state(ShipState.FAILED);
             return Result.failure("Не удалось полностью восстановить корабль: " + ex.getMessage());
+        }
+    }
+
+    private void restoreBlocksOnly(ShipModel ship, World world, org.bukkit.Location origin) {
+        for (ShipBlock block : ship.blocks()) {
+            Block target = world.getBlockAt(origin.getBlockX() + block.x(), origin.getBlockY() + block.y(), origin.getBlockZ() + block.z());
+            target.setBlockData(block.blockData(), false);
+            if (block.state() != null && block.state().blockState() != null) {
+                block.state().blockState().copy(target.getLocation()).update(true, false);
+            }
         }
     }
 
