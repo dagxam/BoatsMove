@@ -8,6 +8,7 @@ import org.bukkit.command.CommandSender;
 import org.bukkit.plugin.java.JavaPlugin;
 import ru.dagxam.boatsmove.ship.ShipActivationListener;
 import ru.dagxam.boatsmove.ship.ShipActivationService;
+import ru.dagxam.boatsmove.ship.ShipDisplayManager;
 import ru.dagxam.boatsmove.ship.ShipRegistry;
 
 import java.util.HashSet;
@@ -15,12 +16,17 @@ import java.util.Set;
 
 public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor {
     private ShipRegistry shipRegistry;
+    private ShipDisplayManager displayManager;
     private ShipActivationService activationService;
 
     @Override
     public void onEnable() {
         saveDefaultConfig();
         this.shipRegistry = new ShipRegistry();
+        this.displayManager = new ShipDisplayManager(
+                this,
+                Math.max(0, getConfig().getInt("movement.interpolation-ticks", 2))
+        );
         this.activationService = createActivationService();
 
         Material activationBlock = readMaterial("ships.activation-block", Material.OAK_BUTTON);
@@ -37,6 +43,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
 
     @Override
     public void onDisable() {
+        if (displayManager != null) displayManager.removeAll();
         if (shipRegistry != null) shipRegistry.clearRuntimeState();
         getLogger().info("BoatsMove disabled.");
     }
@@ -50,6 +57,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         }
         return new ShipActivationService(
                 shipRegistry,
+                displayManager,
                 Math.max(1, getConfig().getInt("ships.min-blocks", 2)),
                 Math.max(1, getConfig().getInt("ships.max-blocks", 5000)),
                 forbidden,
@@ -68,6 +76,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     }
 
     public ShipRegistry getShipRegistry() { return shipRegistry; }
+    public ShipDisplayManager getDisplayManager() { return displayManager; }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
