@@ -68,6 +68,7 @@ public final class ShipMovementController {
             Player pilot = plugin.getServer().getPlayer(ship.ownerId());
             if (pilot == null || !pilot.isOnline() || !pilot.getWorld().getUID().equals(ship.worldId())) {
                 applyDrag(runtime);
+                displays.updatePose(ship, runtime.position(), ship.yaw());
                 passengers.tick(ship);
                 continue;
             }
@@ -101,13 +102,16 @@ public final class ShipMovementController {
                 Location next = current.clone().add(dx, 0, dz);
 
                 if (canMove(ship, next)) {
-                    displays.translate(ship, dx, 0, dz);
                     runtime.position(next);
                 } else {
                     runtime.speed(0.0);
                 }
             }
 
+            // Rebuild the visual pose from authoritative position + yaw every
+            // tick. This prevents accumulated visual drift and rotates the
+            // complete structure around its anchor as one rigid body.
+            displays.updatePose(ship, runtime.position(), ship.yaw());
             passengers.tick(ship);
         }
     }
