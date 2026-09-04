@@ -17,13 +17,10 @@ import java.util.UUID;
 
 /** Finds a connected ship structure without modifying the world. */
 public final class ShipStructureScanner {
+    // Face connectivity is intentional: diagonal contact must not accidentally
+    // attach a nearby building, pier or second ship to this ship.
     private static final int[][] NEIGHBORS = {
-            {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1},
-            {1,1,0},{1,-1,0},{-1,1,0},{-1,-1,0},
-            {1,0,1},{1,0,-1},{-1,0,1},{-1,0,-1},
-            {0,1,1},{0,1,-1},{0,-1,1},{0,-1,-1},
-            {1,1,1},{1,1,-1},{1,-1,1},{1,-1,-1},
-            {-1,1,1},{-1,1,-1},{-1,-1,1},{-1,-1,-1}
+            {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}
     };
 
     public Result scan(Block control, int minBlocks, int maxBlocks, Set<Material> forbidden) {
