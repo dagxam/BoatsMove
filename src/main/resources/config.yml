@@ -1,5 +1,6 @@
 # BoatsMove
-# Core configuration. Ship activation is now implemented; movement/rendering come next.
+# Core configuration. Ship activation and full-structure rendering are implemented;
+# movement and passenger control are the next layer.
 
 ships:
   activation-block: OAK_BUTTON
@@ -30,6 +31,7 @@ movement:
   turn-speed: 2.5
   drag: 0.90
   vertical-snap: true
+  interpolation-ticks: 2
 
 storage:
   save-on-activation: true
