@@ -22,12 +22,12 @@ import java.util.UUID;
 
 /** Virtual inventory/TileState bridge for containers on active ships. */
 public final class VirtualChestManager implements Listener {
-    private static final String ID_PREFIX = " ";
     private final ShipRegistry registry;
     private final Map<UUID, OpenStorage> open = new HashMap<>();
 
     public VirtualChestManager(ShipRegistry registry) {
         this.registry = registry;
+        registry.storageManager(this);
     }
 
     public boolean open(Player player, VirtualBlockInteraction.VirtualHit hit) {
@@ -86,69 +86,54 @@ public final class VirtualChestManager implements Listener {
         save(storage);
     }
 
-    /** Writes every currently open virtual inventory back to its ShipModel. */
     public void flushAll() {
         for (OpenStorage storage : new ArrayList<>(open.values())) save(storage);
     }
 
-    /** Writes all open virtual inventories belonging to one ship. */
     public void flushShip(UUID shipId) {
         for (OpenStorage storage : new ArrayList<>(open.values())) {
             if (storage.shipId().equals(shipId)) save(storage);
         }
     }
 
-    /** Saves and closes all virtual inventories of a ship before deactivation. */
     public void closeShip(UUID shipId) {
         for (Map.Entry<UUID, OpenStorage> entry : new ArrayList<>(open.entrySet())) {
             OpenStorage storage = entry.getValue();
             if (!storage.shipId().equals(shipId)) continue;
             save(storage);
             Player player = Bukkit.getPlayer(entry.getKey());
-            if (player != null && player.getOpenInventory().getTopInventory() == storage.inventory()) {
-                player.closeInventory();
-            }
+            if (player != null && player.getOpenInventory().getTopInventory() == storage.inventory()) player.closeInventory();
             open.remove(entry.getKey());
         }
     }
 
-    /**
-     * Restores block data, then the captured TileState, then inventory contents.
-     * This keeps furnace timers/properties and other BlockEntity state separate
-     * from the inventory payload and restores them in the safe order.
-     */
+    /** Restores block data, complete captured TileState, and inventory contents. */
     public void restoreShip(ShipModel ship, World world, org.bukkit.Location origin) {
         List<ShipBlock> blocks = ship.blocks();
 
+        // 1. Create the correct physical block and BlockEntity type.
         for (ShipBlock block : blocks) {
-            org.bukkit.block.Block target = world.getBlockAt(
-                    origin.getBlockX() + block.x(),
-                    origin.getBlockY() + block.y(),
-                    origin.getBlockZ() + block.z());
+            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + block.x(), origin.getBlockY() + block.y(), origin.getBlockZ() + block.z());
             target.setBlockData(block.blockData(), false);
         }
 
+        // 2. Restore the captured TileState (orientation, timers/properties and other state).
         for (ShipBlock block : blocks) {
             ShipBlockState snapshot = block.state();
             if (snapshot == null || snapshot.blockState() == null) continue;
-            org.bukkit.block.Block target = world.getBlockAt(
-                    origin.getBlockX() + block.x(),
-                    origin.getBlockY() + block.y(),
-                    origin.getBlockZ() + block.z());
+            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + block.x(), origin.getBlockY() + block.y(), origin.getBlockZ() + block.z());
             try {
                 snapshot.blockState().copy(target.getLocation()).update(true, false);
             } catch (RuntimeException ignored) {
-                // Continue restoring the remaining BlockEntities.
+                // Continue restoring other BlockEntities.
             }
         }
 
+        // 3. Restore inventories after TileState materialization.
         for (ShipBlock block : blocks) {
             ShipBlockState snapshot = block.state();
             if (snapshot == null || !snapshot.hasInventory()) continue;
-            org.bukkit.block.Block target = world.getBlockAt(
-                    origin.getBlockX() + block.x(),
-                    origin.getBlockY() + block.y(),
-                    origin.getBlockZ() + block.z());
+            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + block.x(), origin.getBlockY() + block.y(), origin.getBlockZ() + block.z());
             org.bukkit.block.BlockState current = target.getState();
             if (current instanceof org.bukkit.block.Container container) {
                 container.getInventory().setContents(trimToSize(snapshot.inventory(), container.getInventory().getSize()));
@@ -164,17 +149,13 @@ public final class VirtualChestManager implements Listener {
     private void save(OpenStorage storage) {
         ShipModel ship = registry.get(storage.shipId());
         if (ship == null || (ship.state() != ShipState.ACTIVE && ship.state() != ShipState.DEACTIVATING)) return;
-
         ShipBlock block = findBlock(ship, storage.x(), storage.y(), storage.z());
         if (block == null || block.state() == null) return;
 
         ItemStack[] contents = storage.inventory().getContents();
         block.replaceState(withInventory(block.state(), contents));
-
         if (storage.type() == Material.CHEST || storage.type() == Material.TRAPPED_CHEST) {
-            for (ShipBlock other : findDoubleChestParts(ship, block)) {
-                other.replaceState(withInventory(other.state(), contents));
-            }
+            for (ShipBlock other : findDoubleChestParts(ship, block)) other.replaceState(withInventory(other.state(), contents));
         }
     }
 
@@ -183,25 +164,19 @@ public final class VirtualChestManager implements Listener {
     }
 
     private static ShipBlock findBlock(ShipModel ship, int x, int y, int z) {
-        for (ShipBlock block : ship.blocks()) {
-            if (block.x() == x && block.y() == y && block.z() == z) return block;
-        }
+        for (ShipBlock block : ship.blocks()) if (block.x() == x && block.y() == y && block.z() == z) return block;
         return null;
     }
 
-    /** Adjacent 54-slot chest snapshots represent the two halves of one chest. */
     private static List<ShipBlock> findDoubleChestParts(ShipModel ship, ShipBlock source) {
         List<ShipBlock> result = new ArrayList<>();
         if (source.state() == null || source.state().inventory().length != 54) return result;
         Material type = source.blockData().getMaterial();
         if (type != Material.CHEST && type != Material.TRAPPED_CHEST) return result;
-
         for (ShipBlock candidate : ship.blocks()) {
             if (candidate == source || candidate.state() == null) continue;
             if (candidate.blockData().getMaterial() != type || candidate.state().inventory().length != 54) continue;
-            int distance = Math.abs(candidate.x() - source.x())
-                    + Math.abs(candidate.y() - source.y())
-                    + Math.abs(candidate.z() - source.z());
+            int distance = Math.abs(candidate.x() - source.x()) + Math.abs(candidate.y() - source.y()) + Math.abs(candidate.z() - source.z());
             if (distance == 1) result.add(candidate);
         }
         return result;
@@ -224,19 +199,17 @@ public final class VirtualChestManager implements Listener {
     private static String titleFor(Material type, UUID shipId) {
         String id = shipId.toString().substring(0, 8);
         return switch (type) {
-            case BARREL -> "Корабельная бочка" + ID_PREFIX + id;
-            case FURNACE -> "Корабельная печь" + ID_PREFIX + id;
-            case SMOKER -> "Корабельная коптильня" + ID_PREFIX + id;
-            case BLAST_FURNACE -> "Корабельная плавильня" + ID_PREFIX + id;
-            default -> "Корабельный сундук" + ID_PREFIX + id;
+            case BARREL -> "Корабельная бочка " + id;
+            case FURNACE -> "Корабельная печь " + id;
+            case SMOKER -> "Корабельная коптильня " + id;
+            case BLAST_FURNACE -> "Корабельная плавильня " + id;
+            default -> "Корабельный сундук " + id;
         };
     }
 
     private static ItemStack[] trimToSize(ItemStack[] source, int size) {
         ItemStack[] result = new ItemStack[size];
-        for (int i = 0; i < Math.min(source.length, size); i++) {
-            result[i] = source[i] == null ? null : source[i].clone();
-        }
+        for (int i = 0; i < Math.min(source.length, size); i++) result[i] = source[i] == null ? null : source[i].clone();
         return result;
     }
 
@@ -244,10 +217,7 @@ public final class VirtualChestManager implements Listener {
 
     private static final class VirtualStorageHolder implements InventoryHolder {
         private Inventory inventory;
-
         private void inventory(Inventory inventory) { this.inventory = inventory; }
-
-        @Override
-        public Inventory getInventory() { return inventory; }
+        @Override public Inventory getInventory() { return inventory; }
     }
 }
