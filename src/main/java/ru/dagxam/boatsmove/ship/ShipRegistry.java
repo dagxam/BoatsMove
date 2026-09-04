@@ -41,6 +41,10 @@ public final class ShipRegistry {
         runtime.computeIfAbsent(ship.id(), ignored -> new ShipRuntimeState(position)).position(position);
     }
 
+    public void removeRuntime(UUID id) {
+        runtime.remove(id);
+    }
+
     public void unregister(UUID id) {
         ships.remove(id);
         runtime.remove(id);
