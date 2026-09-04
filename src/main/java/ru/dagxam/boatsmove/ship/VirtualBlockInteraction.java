@@ -20,11 +20,14 @@ public final class VirtualBlockInteraction implements Listener {
     private static final double EPSILON = 1.0E-7;
     private final ShipRegistry registry;
     private final VirtualChestManager chests;
+    private ShipDamageManager damageManager;
 
     public VirtualBlockInteraction(ShipRegistry registry, VirtualChestManager chests) {
         this.registry = registry;
         this.chests = chests;
     }
+
+    public void damageManager(ShipDamageManager damageManager) { this.damageManager = damageManager; }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent event) {
@@ -41,6 +44,10 @@ public final class VirtualBlockInteraction implements Listener {
         if ((action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK)
                 && chests.open(player, hit)) return;
 
+        if ((action == Action.LEFT_CLICK_AIR || action == Action.LEFT_CLICK_BLOCK) && damageManager != null) {
+            damageManager.damage(hit.ship(), 1.0, player);
+            return;
+        }
         player.sendActionBar("§7Корабль: §f" + hit.block().blockData().getMaterial().name());
     }
 
@@ -50,12 +57,10 @@ public final class VirtualBlockInteraction implements Listener {
         if (world == null) return null;
         Vector direction = eye.getDirection().normalize();
         VirtualHit nearest = null;
-
         for (ShipModel ship : registry.all()) {
             if (ship.state() != ShipState.ACTIVE || !ship.worldId().equals(world.getUID())) continue;
             ShipRuntimeState runtime = registry.runtime(ship.id());
             if (runtime == null) continue;
-
             for (ShipBlock block : ship.blocks()) {
                 double minX = Double.POSITIVE_INFINITY, minY = Double.POSITIVE_INFINITY, minZ = Double.POSITIVE_INFINITY;
                 double maxX = Double.NEGATIVE_INFINITY, maxY = Double.NEGATIVE_INFINITY, maxZ = Double.NEGATIVE_INFINITY;
@@ -89,17 +94,13 @@ public final class VirtualBlockInteraction implements Listener {
         return new Vector(p.getX() + rollX, p.getY() + rollY, p.getZ() + pitchZ);
     }
 
-    private double rayAabbDistance(Vector origin, Vector direction, double minX, double minY, double minZ,
-                                   double maxX, double maxY, double maxZ) {
+    private double rayAabbDistance(Vector origin, Vector direction, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
         double tMin = 0.0, tMax = MAX_DISTANCE;
         double[] o = {origin.getX(), origin.getY(), origin.getZ()};
         double[] d = {direction.getX(), direction.getY(), direction.getZ()};
         double[] min = {minX, minY, minZ}, max = {maxX, maxY, maxZ};
         for (int i = 0; i < 3; i++) {
-            if (Math.abs(d[i]) < EPSILON) {
-                if (o[i] < min[i] || o[i] > max[i]) return -1;
-                continue;
-            }
+            if (Math.abs(d[i]) < EPSILON) { if (o[i] < min[i] || o[i] > max[i]) return -1; continue; }
             double inv = 1.0 / d[i];
             double t1 = (min[i] - o[i]) * inv, t2 = (max[i] - o[i]) * inv;
             if (t1 > t2) { double tmp = t1; t1 = t2; t2 = tmp; }
@@ -109,8 +110,7 @@ public final class VirtualBlockInteraction implements Listener {
         return tMin;
     }
 
-    private BlockFace faceFromRay(Vector origin, Vector direction, double distance,
-                                  double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
+    private BlockFace faceFromRay(Vector origin, Vector direction, double distance, double minX, double minY, double minZ, double maxX, double maxY, double maxZ) {
         Vector hit = origin.clone().add(direction.clone().multiply(distance));
         double dx = Math.min(Math.abs(hit.getX() - minX), Math.abs(hit.getX() - maxX));
         double dy = Math.min(Math.abs(hit.getY() - minY), Math.abs(hit.getY() - maxY));
