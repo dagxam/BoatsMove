@@ -13,10 +13,13 @@ import org.bukkit.entity.Player;
 public final class ShipActivationListener implements Listener {
     private final Material activationBlock;
     private final ShipActivationService activationService;
+    private final ShipPassengerManager passengerManager;
 
-    public ShipActivationListener(Material activationBlock, ShipActivationService activationService) {
+    public ShipActivationListener(Material activationBlock, ShipActivationService activationService,
+                                  ShipPassengerManager passengerManager) {
         this.activationBlock = activationBlock;
         this.activationService = activationService;
+        this.passengerManager = passengerManager;
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -33,5 +36,11 @@ public final class ShipActivationListener implements Listener {
         player.sendMessage(result.success()
                 ? org.bukkit.ChatColor.GREEN + result.message()
                 : result.message());
+
+        if (result.success() && result.ship() != null) {
+            passengerManager.board(result.ship(), player);
+            player.sendMessage(org.bukkit.ChatColor.AQUA +
+                    "Вы заняли место управления. W/S — движение, A/D — поворот, Shift — выйти.");
+        }
     }
 }
