@@ -5,12 +5,16 @@ import org.bukkit.Material;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
+import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import ru.dagxam.boatsmove.ship.ShipActivationListener;
 import ru.dagxam.boatsmove.ship.ShipActivationService;
+import ru.dagxam.boatsmove.ship.ShipDamageManager;
 import ru.dagxam.boatsmove.ship.ShipDisplayManager;
 import ru.dagxam.boatsmove.ship.ShipMovementController;
 import ru.dagxam.boatsmove.ship.ShipPassengerManager;
+import ru.dagxam.boatsmove.ship.ShipPersistenceManager;
+import ru.dagxam.boatsmove.ship.ShipProtectionListener;
 import ru.dagxam.boatsmove.ship.ShipRegistry;
 import ru.dagxam.boatsmove.ship.VirtualBlockInteraction;
 import ru.dagxam.boatsmove.ship.VirtualChestManager;
@@ -24,6 +28,9 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private ShipPassengerManager passengerManager;
     private ShipMovementController movementController;
     private ShipActivationService activationService;
+    private ShipPersistenceManager persistence;
+    private VirtualChestManager storage;
+    private int autosaveTask = -1;
 
     @Override
     public void onEnable() {
@@ -36,26 +43,48 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
                 getConfig().getDouble("movement.reverse-speed", 0.28), getConfig().getDouble("movement.turn-speed", 2.5),
                 getConfig().getDouble("movement.drag", 0.90), getConfig().getBoolean("movement.water-only", true));
         this.activationService = createActivationService();
+        this.persistence = new ShipPersistenceManager(this, shipRegistry);
 
         Material activationBlock = readMaterial("ships.activation-block", Material.OAK_BUTTON);
         getServer().getPluginManager().registerEvents(new ShipActivationListener(activationBlock, activationService, passengerManager), this);
-        VirtualChestManager chestManager = new VirtualChestManager(shipRegistry);
-        getServer().getPluginManager().registerEvents(chestManager, this);
-        getServer().getPluginManager().registerEvents(new VirtualBlockInteraction(shipRegistry, chestManager), this);
+        this.storage = new VirtualChestManager(shipRegistry);
+        getServer().getPluginManager().registerEvents(storage, this);
+        VirtualBlockInteraction interaction = new VirtualBlockInteraction(shipRegistry, storage);
+        interaction.damageManager(new ShipDamageManager(shipRegistry, activationService));
+        getServer().getPluginManager().registerEvents(interaction, this);
+        getServer().getPluginManager().registerEvents(new ShipProtectionListener(shipRegistry), this);
+
+        int loaded = persistence.loadAll();
+        for (var ship : shipRegistry.all()) {
+            try { displayManager.spawn(ship); }
+            catch (RuntimeException ex) { ship.state(ru.dagxam.boatsmove.ship.ShipState.FAILED); getLogger().warning("Не удалось восстановить корабль " + ship.id() + ": " + ex.getMessage()); }
+        }
+        startAutosave();
         movementController.start();
 
         if (getCommand("boatsmove") != null) getCommand("boatsmove").setExecutor(this);
-        getLogger().info("BoatsMove enabled. Ship core initialized.");
+        getLogger().info("BoatsMove enabled. Restored active ships: " + loaded);
         getLogger().info("Activation block: " + activationBlock);
     }
 
     @Override
     public void onDisable() {
+        if (autosaveTask != -1) getServer().getScheduler().cancelTask(autosaveTask);
+        if (storage != null) storage.flushAll();
+        if (persistence != null) persistence.saveAll();
         if (movementController != null) movementController.stop();
         if (passengerManager != null) passengerManager.clearAll();
         if (displayManager != null) displayManager.removeAll();
         if (shipRegistry != null) shipRegistry.clearRuntimeState();
         getLogger().info("BoatsMove disabled.");
+    }
+
+    private void startAutosave() {
+        long seconds = Math.max(5, getConfig().getLong("storage.autosave-seconds", 30));
+        autosaveTask = getServer().getScheduler().runTaskTimer(this, () -> {
+            if (storage != null) storage.flushAll();
+            if (persistence != null) persistence.saveAll();
+        }, seconds * 20L, seconds * 20L).getTaskId();
     }
 
     private ShipActivationService createActivationService() {
@@ -87,9 +116,29 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         if (!sender.hasPermission("boatsmove.admin")) { sender.sendMessage(ChatColor.RED + "Нет прав."); return true; }
         if (args.length == 0 || args[0].equalsIgnoreCase("status")) {
             int active = shipRegistry == null ? 0 : shipRegistry.size();
-            sender.sendMessage(ChatColor.AQUA + "BoatsMove " + ChatColor.WHITE + "core online; active ships: " + active); return true;
+            sender.sendMessage(ChatColor.AQUA + "BoatsMove " + ChatColor.WHITE + "online; active ships: " + active); return true;
         }
         if (args[0].equalsIgnoreCase("reload")) { reloadConfig(); sender.sendMessage(ChatColor.GREEN + "BoatsMove config перезагружен."); return true; }
-        sender.sendMessage(ChatColor.YELLOW + "Использование: /boatsmove <reload|status>"); return true;
+        if (args[0].equalsIgnoreCase("save")) { if (storage != null) storage.flushAll(); if (persistence != null) persistence.saveAll(); sender.sendMessage(ChatColor.GREEN + "Корабли сохранены."); return true; }
+        if (args[0].equalsIgnoreCase("deactivate")) {
+            if (!(sender instanceof Player player)) { sender.sendMessage(ChatColor.RED + "Команда требует игрока."); return true; }
+            var nearest = nearestShip(player);
+            if (nearest == null) { player.sendMessage(ChatColor.RED + "Рядом нет активного корабля."); return true; }
+            var result = activationService.deactivate(nearest);
+            player.sendMessage(result.success() ? ChatColor.GREEN + result.message() : result.message());
+            return true;
+        }
+        sender.sendMessage(ChatColor.YELLOW + "Использование: /boatsmove <reload|status|save|deactivate>"); return true;
+    }
+
+    private ru.dagxam.boatsmove.ship.ShipModel nearestShip(Player player) {
+        ru.dagxam.boatsmove.ship.ShipModel nearest = null;
+        double best = 16.0 * 16.0;
+        for (var ship : shipRegistry.all()) {
+            if (ship.state() != ru.dagxam.boatsmove.ship.ShipState.ACTIVE || !ship.worldId().equals(player.getWorld().getUID())) continue;
+            double d = shipRegistry.position(ship).distanceSquared(player.getLocation());
+            if (d < best) { best = d; nearest = ship; }
+        }
+        return nearest;
     }
 }
