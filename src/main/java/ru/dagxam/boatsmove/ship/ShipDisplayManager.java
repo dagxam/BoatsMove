@@ -6,7 +6,6 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Transformation;
 import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -55,22 +54,7 @@ public final class ShipDisplayManager {
         }
     }
 
-    /** Moves every visual block by a world-space delta. */
-    public void translate(ShipModel ship, double dx, double dy, double dz) {
-        List<BlockDisplay> list = displays.get(ship.id());
-        if (list == null) return;
-        for (BlockDisplay display : list) {
-            if (!display.isValid()) continue;
-            display.teleport(display.getLocation().add(dx, dy, dz));
-        }
-    }
-
-    /**
-     * Updates the complete visual pose from the logical ship pose.
-     * Block centers are rotated around the ship anchor center, so the whole
-     * structure turns as one rigid body instead of each block orbiting its own
-     * point. Display interpolation makes the rotation visually smooth.
-     */
+    /** Updates every display to the exact rigid-body pose of the ship. */
     public void updatePose(ShipModel ship, Location position, float yaw) {
         List<BlockDisplay> list = displays.get(ship.id());
         if (list == null || position == null) return;
@@ -86,12 +70,14 @@ public final class ShipDisplayManager {
             ShipBlock block = blocks.get(i);
             if (!display.isValid()) continue;
 
-            double localX = block.x() + 0.5 - 0.5;
-            double localZ = block.z() + 0.5 - 0.5;
+            // Ship origin is the center of the control block. Using block centers
+            // makes every block rotate around the same anchor without drift.
+            double localX = block.x() + 0.5;
+            double localZ = block.z() + 0.5;
             double rotatedX = localX * cos - localZ * sin;
             double rotatedZ = localX * sin + localZ * cos;
 
-            Location target = position.clone().add(rotatedX, block.y(), rotatedZ);
+            Location target = position.clone().add(rotatedX - 0.5, block.y(), rotatedZ - 0.5);
             display.teleport(target);
 
             Transformation current = display.getTransformation();
@@ -102,6 +88,16 @@ public final class ShipDisplayManager {
                     current.getScale(),
                     current.getRightRotation()
             ));
+        }
+    }
+
+    /** Moves the whole logical pose and refreshes all displays. */
+    public void translate(ShipModel ship, double dx, double dy, double dz) {
+        List<BlockDisplay> list = displays.get(ship.id());
+        if (list == null) return;
+        for (BlockDisplay display : list) {
+            if (!display.isValid()) continue;
+            display.teleport(display.getLocation().add(dx, dy, dz));
         }
     }
 
