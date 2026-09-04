@@ -86,7 +86,9 @@ public final class ShipMovementController {
             if (input.isLeft()) ship.yaw(ship.yaw() - (float) turnSpeed);
             if (input.isRight()) ship.yaw(ship.yaw() + (float) turnSpeed);
 
-            double terrainMultiplier = water.shallow ? shallowSpeedMultiplier : 1.0;
+            double classSpeed = ship.shipClass().speedMultiplier();
+            double floodSpeed = Math.max(0.25, 1.0 - ship.flooding() * 0.65);
+            double terrainMultiplier = (water.shallow ? shallowSpeedMultiplier : 1.0) * classSpeed * floodSpeed;
             double forwardLimit = maxSpeed * terrainMultiplier;
             double reverseLimit = reverseSpeed * terrainMultiplier;
             if (input.isForward()) speed = Math.min(forwardLimit, speed + acceleration * terrainMultiplier);
@@ -129,9 +131,10 @@ public final class ShipMovementController {
 
         double sizeFactor = clamp(Math.cbrt(ship.blockCount() / 16.0), 0.75, 1.75);
         double desiredImmersion = clamp(0.34 + 0.10 * (sizeFactor - 0.75), 0.30, 0.50);
+        desiredImmersion += ship.flooding() * 0.18 / Math.max(0.75, ship.shipClass().buoyancyMultiplier());
         double targetBottom = water.averageSurface - desiredImmersion * height;
         double error = targetBottom - bottom;
-        double vertical = runtime.verticalSpeed() + error * buoyancyStrength;
+        double vertical = runtime.verticalSpeed() + error * buoyancyStrength * ship.shipClass().buoyancyMultiplier();
         vertical *= verticalDamping;
         vertical = clamp(vertical, -maxVerticalStep, maxVerticalStep);
         if (Math.abs(error) < 0.02) vertical *= 0.45;
@@ -179,35 +182,42 @@ public final class ShipMovementController {
             if (!Double.isNaN(surface)) { surfaces[i] = surface; count++; }
         }
         if (count == 0) return WaterState.empty();
-        double avg = 0;
-        for (int i = 0; i < surfaces.length; i++) if (surfaces[i] != 0) avg += surfaces[i];
-        avg /= count;
-        boolean shallow = false;
-        double bottom = position.getY() + minY;
-        for (int i = 0; i < surfaces.length; i++) {
-            if (surfaces[i] == 0) continue;
-            double depth = surfaces[i] - bottom;
-            if (depth < 1.15) shallow = true;
-        }
-        return new WaterState(count, avg, surfaces[0], surfaces[1], surfaces[2], surfaces[3], shallow);
+        double average = 0;
+        for (int i = 0; i < surfaces.length; i++) if (i < count || surfaces[i] != 0) average += surfaces[i];
+        average /= count;
+        return new WaterState(count, average, surfaces[0], surfaces[1], surfaces[2], surfaces[3],
+                isShallow(world, position, minX, maxX, minZ, maxZ));
     }
 
-    private double findSurface(World world, int x, int z, int fromY, int toY) {
-        for (int y = toY; y >= fromY; y--) {
+    private double findSurface(World world, int x, int z, int minY, int maxY) {
+        for (int y = maxY; y >= minY; y--) {
             Material type = world.getBlockAt(x, y, z).getType();
-            if (type == Material.WATER || type == Material.BUBBLE_COLUMN) return y + 1.0;
+            if (type == Material.WATER) return y + 1.0;
         }
         return Double.NaN;
     }
 
-    private void applyDrag(ShipRuntimeState runtime) {
-        double speed = runtime.speed() * drag;
-        if (Math.abs(speed) < 0.001) speed = 0.0;
-        runtime.speed(speed);
+    private boolean isShallow(World world, Location pos, int minX, int maxX, int minZ, int maxZ) {
+        int y = (int) Math.floor(pos.getY());
+        for (int x = minX; x <= maxX; x += Math.max(1, (maxX - minX) / 3)) {
+            for (int z = minZ; z <= maxZ; z += Math.max(1, (maxZ - minZ) / 3)) {
+                int wx = (int) Math.floor(pos.getX() + x), wz = (int) Math.floor(pos.getZ() + z);
+                if (world.getBlockAt(wx, y - 2, wz).getType().isSolid()) return true;
+            }
+        }
+        return false;
     }
 
-    private float approach(float current, float target, float factor) { return current + (target - current) * factor; }
-    private double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
+    private void applyDrag(ShipRuntimeState runtime) {
+        runtime.speed(runtime.speed() * drag);
+        if (Math.abs(runtime.speed()) < 0.001) runtime.speed(0.0);
+    }
+
+    private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
+    private static float approach(float current, float target, float amount) {
+        if (current < target) return Math.min(target, current + amount);
+        return Math.max(target, current - amount);
+    }
 
     private record WaterState(int samples, double averageSurface, double frontSurface, double rearSurface,
                               double leftSurface, double rightSurface, boolean shallow) {
