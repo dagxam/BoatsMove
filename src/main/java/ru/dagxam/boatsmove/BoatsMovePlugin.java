@@ -10,6 +10,7 @@ import ru.dagxam.boatsmove.ship.ShipActivationListener;
 import ru.dagxam.boatsmove.ship.ShipActivationService;
 import ru.dagxam.boatsmove.ship.ShipDisplayManager;
 import ru.dagxam.boatsmove.ship.ShipMovementController;
+import ru.dagxam.boatsmove.ship.ShipPassengerManager;
 import ru.dagxam.boatsmove.ship.ShipRegistry;
 
 import java.util.HashSet;
@@ -18,6 +19,7 @@ import java.util.Set;
 public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor {
     private ShipRegistry shipRegistry;
     private ShipDisplayManager displayManager;
+    private ShipPassengerManager passengerManager;
     private ShipMovementController movementController;
     private ShipActivationService activationService;
 
@@ -29,10 +31,12 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
                 this,
                 Math.max(0, getConfig().getInt("movement.interpolation-ticks", 2))
         );
+        this.passengerManager = new ShipPassengerManager(this, shipRegistry);
         this.movementController = new ShipMovementController(
                 this,
                 shipRegistry,
                 displayManager,
+                passengerManager,
                 getConfig().getDouble("movement.max-speed", 0.65),
                 getConfig().getDouble("movement.acceleration", 0.035),
                 getConfig().getDouble("movement.reverse-speed", 0.28),
@@ -44,7 +48,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
 
         Material activationBlock = readMaterial("ships.activation-block", Material.OAK_BUTTON);
         getServer().getPluginManager().registerEvents(
-                new ShipActivationListener(activationBlock, activationService), this);
+                new ShipActivationListener(activationBlock, activationService, passengerManager), this);
 
         movementController.start();
 
@@ -59,6 +63,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     @Override
     public void onDisable() {
         if (movementController != null) movementController.stop();
+        if (passengerManager != null) passengerManager.clearAll();
         if (displayManager != null) displayManager.removeAll();
         if (shipRegistry != null) shipRegistry.clearRuntimeState();
         getLogger().info("BoatsMove disabled.");
@@ -93,6 +98,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
 
     public ShipRegistry getShipRegistry() { return shipRegistry; }
     public ShipDisplayManager getDisplayManager() { return displayManager; }
+    public ShipPassengerManager getPassengerManager() { return passengerManager; }
     public ShipMovementController getMovementController() { return movementController; }
 
     @Override
