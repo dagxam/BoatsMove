@@ -1,5 +1,5 @@
 name: BoatsMove
-version: '${project.version}'
+version: '0.1.0-SNAPSHOT'
 main: ru.dagxam.boatsmove.BoatsMovePlugin
 api-version: '26.2'
 author: dagxam
