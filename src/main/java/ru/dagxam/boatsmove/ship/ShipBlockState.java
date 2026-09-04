@@ -1,28 +1,28 @@
 package ru.dagxam.boatsmove.ship;
 
+import org.bukkit.block.BlockState;
 import org.bukkit.inventory.ItemStack;
 
-import java.util.Map;
+import java.util.Arrays;
 
-/**
- * Optional block-state snapshot. Containers are stored here independently of
- * any entity so activation/deactivation cannot destroy their contents.
- *
- * The concrete serializer will be added with the storage subsystem. The
- * current model keeps the contract explicit without coupling the ship to a
- * particular persistence format.
- */
+/** Runtime snapshot of a block entity owned by the ship. */
 public record ShipBlockState(
         String stateType,
-        Map<Integer, ItemStack> inventory,
-        Map<String, Object> properties
+        BlockState blockState,
+        ItemStack[] inventory
 ) {
     public ShipBlockState {
-        inventory = inventory == null ? Map.of() : Map.copyOf(inventory);
-        properties = properties == null ? Map.of() : Map.copyOf(properties);
+        blockState = blockState == null ? null : blockState.copy();
+        inventory = inventory == null ? new ItemStack[0] : cloneContents(inventory);
+    }
+
+    private static ItemStack[] cloneContents(ItemStack[] source) {
+        return Arrays.stream(source)
+                .map(item -> item == null ? null : item.clone())
+                .toArray(ItemStack[]::new);
     }
 
     public boolean hasInventory() {
-        return !inventory.isEmpty();
+        return inventory.length > 0;
     }
 }
