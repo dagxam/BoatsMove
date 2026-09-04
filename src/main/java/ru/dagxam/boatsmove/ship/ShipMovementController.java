@@ -8,12 +8,13 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Vector;
 
-/** Boat-like movement controller with multi-point buoyancy and water attitude. */
+/** Boat-like movement controller with multi-point buoyancy and full-hull collision. */
 public final class ShipMovementController {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
     private final ShipDisplayManager displays;
     private final ShipPassengerManager passengers;
+    private final ShipCollisionManager collision;
     private final double maxSpeed, acceleration, reverseSpeed, turnSpeed, drag;
     private final boolean waterOnly;
     private final double buoyancyStrength = 0.12;
@@ -30,6 +31,7 @@ public final class ShipMovementController {
         this.registry = registry;
         this.displays = displays;
         this.passengers = passengers;
+        this.collision = new ShipCollisionManager();
         this.maxSpeed = Math.max(0.01, maxSpeed);
         this.acceleration = Math.max(0.001, acceleration);
         this.reverseSpeed = Math.max(0.01, reverseSpeed);
@@ -93,8 +95,9 @@ public final class ShipMovementController {
             if (Math.abs(speed) >= 0.0001) {
                 Vector direction = new Vector(-Math.sin(Math.toRadians(ship.yaw())), 0,
                         Math.cos(Math.toRadians(ship.yaw())));
-                Location next = runtime.position().clone().add(direction.getX() * speed, 0, direction.getZ() * speed);
-                if (canMove(ship, next, water)) runtime.position(next);
+                Location current = runtime.position();
+                Location next = current.clone().add(direction.getX() * speed, 0, direction.getZ() * speed);
+                if (collision.canMove(ship, current, next)) runtime.position(next);
                 else runtime.speed(0.0);
             }
 
@@ -119,7 +122,6 @@ public final class ShipMovementController {
         double height = Math.max(1.0, maxY - minY + 1.0);
         double immersion = clamp((water.averageSurface - bottom) / height, 0.0, 1.0);
 
-        // Larger hulls displace more water and settle slightly deeper.
         double sizeFactor = clamp(Math.cbrt(ship.blockCount() / 16.0), 0.75, 1.75);
         double desiredImmersion = clamp(0.34 + 0.10 * (sizeFactor - 0.75), 0.30, 0.50);
         double targetBottom = water.averageSurface - desiredImmersion * height;
@@ -131,8 +133,6 @@ public final class ShipMovementController {
         runtime.verticalSpeed(vertical);
         runtime.position(pos.clone().add(0, vertical, 0));
 
-        // Five-point water sampling creates a natural pitch/roll response when
-        // bow, stern, port and starboard see different water levels.
         double front = water.frontSurface - water.averageSurface;
         double rear = water.rearSurface - water.averageSurface;
         double left = water.leftSurface - water.averageSurface;
@@ -178,12 +178,10 @@ public final class ShipMovementController {
         avg /= count;
         boolean shallow = false;
         double bottom = position.getY() + minY;
-        int depthSamples = 0;
         for (int i = 0; i < surfaces.length; i++) {
             if (surfaces[i] == 0) continue;
             double depth = surfaces[i] - bottom;
             if (depth < 1.15) shallow = true;
-            depthSamples++;
         }
         return new WaterState(count, avg, surfaces[0], surfaces[1], surfaces[2], surfaces[3], shallow);
     }
@@ -194,31 +192,6 @@ public final class ShipMovementController {
             if (type == Material.WATER || type == Material.BUBBLE_COLUMN) return y + 1.0;
         }
         return Double.NaN;
-    }
-
-    private boolean canMove(ShipModel ship, Location next, WaterState water) {
-        World world = next.getWorld();
-        if (world == null) return false;
-        boolean hasWater = false;
-        int minY = ship.blocks().stream().mapToInt(ShipBlock::y).min().orElse(0);
-        for (ShipBlock block : ship.blocks()) {
-            int x = next.getBlockX() + block.x(), y = next.getBlockY() + block.y(), z = next.getBlockZ() + block.z();
-            Material type = world.getBlockAt(x, y, z).getType();
-            if (type == Material.WATER || type == Material.BUBBLE_COLUMN) { hasWater = true; continue; }
-            if (type.isAir()) continue;
-            return false;
-        }
-        if (waterOnly && !hasWater) return false;
-
-        // Do not allow the lower hull to pass through seabed/shore blocks.
-        int bottomY = next.getBlockY() + minY;
-        for (ShipBlock block : ship.blocks()) {
-            if (block.y() != minY) continue;
-            Material below = world.getBlockAt(next.getBlockX() + block.x(), bottomY - 1,
-                    next.getBlockZ() + block.z()).getType();
-            if (!below.isAir() && below != Material.WATER && below != Material.BUBBLE_COLUMN) return false;
-        }
-        return true;
     }
 
     private void applyDrag(ShipRuntimeState runtime) {
