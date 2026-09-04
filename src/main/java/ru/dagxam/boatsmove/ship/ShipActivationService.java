@@ -10,25 +10,21 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 
-/**
- * Performs the activation transaction for a player-built ship.
- *
- * The important invariant is simple: the world is changed only after a
- * complete snapshot has been created and all limits have passed. If removal
- * fails, every block already removed by this transaction is restored from the
- * same snapshot.
- */
+/** Performs the activation transaction for a player-built ship. */
 public final class ShipActivationService {
     private final ShipRegistry registry;
     private final ShipStructureScanner scanner = new ShipStructureScanner();
+    private final ShipDisplayManager displayManager;
     private final int minBlocks;
     private final int maxBlocks;
     private final Set<Material> forbidden;
     private final int maxActiveShips;
 
-    public ShipActivationService(ShipRegistry registry, int minBlocks, int maxBlocks,
-                                 Set<Material> forbidden, int maxActiveShips) {
+    public ShipActivationService(ShipRegistry registry, ShipDisplayManager displayManager,
+                                 int minBlocks, int maxBlocks, Set<Material> forbidden,
+                                 int maxActiveShips) {
         this.registry = registry;
+        this.displayManager = displayManager;
         this.minBlocks = minBlocks;
         this.maxBlocks = maxBlocks;
         this.forbidden = Set.copyOf(forbidden);
@@ -44,9 +40,7 @@ public final class ShipActivationService {
         }
 
         ShipStructureScanner.Result scan = scanner.scan(control, minBlocks, maxBlocks, forbidden);
-        if (!scan.success()) {
-            return Result.failure(scan.error());
-        }
+        if (!scan.success()) return Result.failure(scan.error());
 
         ShipStructureScanner.ShipSnapshot snapshot = scan.snapshot();
         if (!snapshot.world().equals(control.getWorld())) {
@@ -57,8 +51,7 @@ public final class ShipActivationService {
         ShipModel ship = new ShipModel(snapshot.id(), ownerId, snapshot.world(), snapshot.origin(), snapshot.blocks());
         ship.state(ShipState.ACTIVATING);
 
-        // Re-check the exact source blocks before changing anything. This prevents
-        // an activation from consuming a structure changed between scan and commit.
+        // Re-check exact source blocks before changing the world.
         for (ShipBlock block : snapshot.blocks()) {
             Block worldBlock = worldBlock(snapshot, block);
             if (!worldBlock.getBlockData().matches(block.blockData())) {
@@ -72,9 +65,14 @@ public final class ShipActivationService {
                 worldBlock(snapshot, block).setType(Material.AIR, false);
                 removed.add(block);
             }
+
+            // Rendering is part of activation. If it fails, restore the original
+            // blocks instead of leaving the player with an invisible ship.
+            displayManager.spawn(ship);
         } catch (RuntimeException ex) {
+            displayManager.remove(ship.id());
             rollback(snapshot, removed);
-            return Result.failure("Активация отменена: не удалось убрать все блоки. Конструкция восстановлена.");
+            return Result.failure("Активация отменена: не удалось создать визуальную модель. Конструкция восстановлена.");
         }
 
         ship.state(ShipState.ACTIVE);
@@ -99,12 +97,48 @@ public final class ShipActivationService {
                 try {
                     block.state().blockState().copy(target.getLocation()).update(true, false);
                 } catch (RuntimeException ignored) {
-                    // The activation result is already a failure; do not hide the
-                    // original error. A later restoration pass can repair tile data.
+                    // Keep the original activation error; a future restoration pass
+                    // can repair complex tile-state data.
                 }
             }
         }
     }
+
+    public Result deactivate(ShipModel ship) {
+        if (ship == null || ship.state() != ShipState.ACTIVE) {
+            return Result.failure("Корабль не активен.");
+        }
+        ship.state(ShipState.DEACTIVATING);
+        displayManager.remove(ship.id());
+
+        World world = displayWorld(ship);
+        if (world == null) {
+            ship.state(ShipState.FAILED);
+            return Result.failure("Мир корабля не найден.");
+        }
+
+        try {
+            for (ShipBlock block : ship.blocks()) {
+                Block target = world.getBlockAt(
+                        ship.origin().getBlockX() + block.x(),
+                        ship.origin().getBlockY() + block.y(),
+                        ship.origin().getBlockZ() + block.z());
+                target.setBlockData(block.blockData(), false);
+            }
+            ship.state(ShipState.BUILT);
+            registry.unregister(ship.id());
+            return new Result(true, "Корабль деактивирован и восстановлен как блоки.", ship);
+        } catch (RuntimeException ex) {
+            ship.state(ShipState.FAILED);
+            return Result.failure("Не удалось полностью восстановить корабль: " + ex.getMessage());
+        }
+    }
+
+    private World displayWorld(ShipModel ship) {
+        return ship.origin().getWorld();
+    }
+
+    public Result failureResult(String message) { return Result.failure(message); }
 
     public record Result(boolean success, String message, ShipModel ship) {
         public static Result success(ShipModel ship) {
