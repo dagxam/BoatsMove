@@ -4,6 +4,8 @@ import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.util.Transformation;
+import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 import java.util.ArrayList;
@@ -38,7 +40,7 @@ public final class ShipDisplayManager {
                     entity.setInterpolationDelay(0);
                     entity.setInterpolationDuration(interpolationTicks);
                     entity.setTeleportDuration(interpolationTicks);
-                    entity.setTransformation(entity.getTransformation());
+                    entity.setBillboard(org.bukkit.entity.Display.Billboard.FIXED);
                     entity.getPersistentDataContainer().set(
                             new org.bukkit.NamespacedKey(plugin, "ship_id"),
                             org.bukkit.persistence.PersistentDataType.STRING,
@@ -59,8 +61,47 @@ public final class ShipDisplayManager {
         if (list == null) return;
         for (BlockDisplay display : list) {
             if (!display.isValid()) continue;
-            Location target = display.getLocation().add(dx, dy, dz);
+            display.teleport(display.getLocation().add(dx, dy, dz));
+        }
+    }
+
+    /**
+     * Updates the complete visual pose from the logical ship pose.
+     * Block centers are rotated around the ship anchor center, so the whole
+     * structure turns as one rigid body instead of each block orbiting its own
+     * point. Display interpolation makes the rotation visually smooth.
+     */
+    public void updatePose(ShipModel ship, Location position, float yaw) {
+        List<BlockDisplay> list = displays.get(ship.id());
+        if (list == null || position == null) return;
+
+        double relativeYaw = Math.toRadians(yaw - ship.origin().getYaw());
+        double sin = Math.sin(relativeYaw);
+        double cos = Math.cos(relativeYaw);
+
+        List<ShipBlock> blocks = ship.blocks();
+        int count = Math.min(list.size(), blocks.size());
+        for (int i = 0; i < count; i++) {
+            BlockDisplay display = list.get(i);
+            ShipBlock block = blocks.get(i);
+            if (!display.isValid()) continue;
+
+            double localX = block.x() + 0.5 - 0.5;
+            double localZ = block.z() + 0.5 - 0.5;
+            double rotatedX = localX * cos - localZ * sin;
+            double rotatedZ = localX * sin + localZ * cos;
+
+            Location target = position.clone().add(rotatedX, block.y(), rotatedZ);
             display.teleport(target);
+
+            Transformation current = display.getTransformation();
+            Quaternionf rotation = new Quaternionf().rotateY((float) relativeYaw);
+            display.setTransformation(new Transformation(
+                    current.getTranslation(),
+                    rotation,
+                    current.getScale(),
+                    current.getRightRotation()
+            ));
         }
     }
 
