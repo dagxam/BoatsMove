@@ -65,8 +65,13 @@ public final class ShipMovementController {
             ShipRuntimeState runtime = registry.runtime(ship.id());
             if (runtime == null) continue;
 
-            WaterState water = sampleWater(ship, runtime.position());
+            Location beforeBuoyancy = runtime.position();
+            WaterState water = sampleWater(ship, beforeBuoyancy);
             applyBuoyancy(ship, runtime, water);
+            if (!collision.canMove(ship, beforeBuoyancy, runtime.position())) {
+                runtime.position(beforeBuoyancy);
+                runtime.verticalSpeed(0.0);
+            }
 
             Player pilot = plugin.getServer().getPlayer(ship.ownerId());
             if (pilot == null || !pilot.isOnline() || !pilot.getWorld().getUID().equals(ship.worldId())) {
@@ -168,6 +173,7 @@ public final class ShipMovementController {
             double wx = position.getX() + points[i][0];
             double wz = position.getZ() + points[i][1];
             int x = (int) Math.floor(wx), z = (int) Math.floor(wz);
+            if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
             double surface = findSurface(world, x, z, (int) Math.floor(position.getY() + minY) - 2,
                     (int) Math.ceil(position.getY() + maxY) + 2);
             if (!Double.isNaN(surface)) { surfaces[i] = surface; count++; }
