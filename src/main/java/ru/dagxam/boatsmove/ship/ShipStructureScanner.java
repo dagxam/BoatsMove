@@ -17,11 +17,22 @@ import java.util.UUID;
 
 /** Finds a connected ship structure without modifying the world. */
 public final class ShipStructureScanner {
-    // Face connectivity is intentional: diagonal contact must not accidentally
-    // attach a nearby building, pier or second ship to this ship.
-    private static final int[][] NEIGHBORS = {
-            {1,0,0},{-1,0,0},{0,1,0},{0,-1,0},{0,0,1},{0,0,-1}
-    };
+    // A ship can now connect by face, edge or corner. This supports structures
+    // such as diagonal stair/beam chains while still requiring actual block contact.
+    private static final int[][] NEIGHBORS = buildNeighbors();
+
+    private static int[][] buildNeighbors() {
+        List<int[]> result = new ArrayList<>(26);
+        for (int dx = -1; dx <= 1; dx++) {
+            for (int dy = -1; dy <= 1; dy++) {
+                for (int dz = -1; dz <= 1; dz++) {
+                    if (dx == 0 && dy == 0 && dz == 0) continue;
+                    result.add(new int[]{dx, dy, dz});
+                }
+            }
+        }
+        return result.toArray(new int[0][]);
+    }
 
     public Result scan(Block control, int minBlocks, int maxBlocks, Set<Material> forbidden) {
         if (control == null || control.getType().isAir()) {
