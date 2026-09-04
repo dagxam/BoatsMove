@@ -10,7 +10,7 @@ import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
 
-/** Performs the activation transaction for a player-built ship. */
+/** Performs the activation/deactivation transaction for a player-built ship. */
 public final class ShipActivationService {
     private final ShipRegistry registry;
     private final ShipStructureScanner scanner = new ShipStructureScanner();
@@ -108,6 +108,12 @@ public final class ShipActivationService {
         if (ship == null || ship.state() != ShipState.ACTIVE) {
             return Result.failure("Корабль не активен.");
         }
+
+        ShipRuntimeState runtime = registry.runtime(ship.id());
+        if (runtime == null) {
+            return Result.failure("Не найдено состояние активного корабля.");
+        }
+
         ship.state(ShipState.DEACTIVATING);
         displayManager.remove(ship.id());
 
@@ -117,17 +123,23 @@ public final class ShipActivationService {
             return Result.failure("Мир корабля не найден.");
         }
 
+        var current = runtime.position();
         try {
+            // Restore all real blocks at the ship's CURRENT position, not its
+            // original activation position.
             for (ShipBlock block : ship.blocks()) {
                 Block target = world.getBlockAt(
-                        ship.origin().getBlockX() + block.x(),
-                        ship.origin().getBlockY() + block.y(),
-                        ship.origin().getBlockZ() + block.z());
+                        current.getBlockX() + block.x(),
+                        current.getBlockY() + block.y(),
+                        current.getBlockZ() + block.z());
                 target.setBlockData(block.blockData(), false);
             }
+
+            // BlockEntity inventory/state restoration is handled by the storage
+            // layer. Do not pretend that setBlockData alone restores containers.
             ship.state(ShipState.BUILT);
             registry.unregister(ship.id());
-            return new Result(true, "Корабль деактивирован и восстановлен как блоки.", ship);
+            return new Result(true, "Корабль деактивирован в текущей позиции и восстановлен как блоки.", ship);
         } catch (RuntimeException ex) {
             ship.state(ShipState.FAILED);
             return Result.failure("Не удалось полностью восстановить корабль: " + ex.getMessage());
@@ -135,7 +147,19 @@ public final class ShipActivationService {
     }
 
     private World displayWorld(ShipModel ship) {
-        return ship.origin().getWorld();
+        return pluginWorld(ship);
+    }
+
+    private World pluginWorld(ShipModel ship) {
+        for (World world : registryWorlds()) {
+            if (world.getUID().equals(ship.worldId())) return world;
+        }
+        return null;
+    }
+
+    private Set<World> registryWorlds() {
+        return new HashSet<>(java.util.Objects.requireNonNullElseGet(
+                org.bukkit.Bukkit.getWorlds(), java.util.List::of));
     }
 
     public Result failureResult(String message) { return Result.failure(message); }
