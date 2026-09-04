@@ -15,16 +15,18 @@ public final class ShipActivationService {
     private final ShipRegistry registry;
     private final ShipStructureScanner scanner = new ShipStructureScanner();
     private final ShipDisplayManager displayManager;
+    private final VirtualChestManager storageManager;
     private final int minBlocks;
     private final int maxBlocks;
     private final Set<Material> forbidden;
     private final int maxActiveShips;
 
     public ShipActivationService(ShipRegistry registry, ShipDisplayManager displayManager,
-                                 int minBlocks, int maxBlocks, Set<Material> forbidden,
-                                 int maxActiveShips) {
+                                 VirtualChestManager storageManager, int minBlocks, int maxBlocks,
+                                 Set<Material> forbidden, int maxActiveShips) {
         this.registry = registry;
         this.displayManager = displayManager;
+        this.storageManager = storageManager;
         this.minBlocks = minBlocks;
         this.maxBlocks = maxBlocks;
         this.forbidden = Set.copyOf(forbidden);
@@ -65,9 +67,6 @@ public final class ShipActivationService {
                 worldBlock(snapshot, block).setType(Material.AIR, false);
                 removed.add(block);
             }
-
-            // Rendering is part of activation. If it fails, restore the original
-            // blocks instead of leaving the player with an invisible ship.
             displayManager.spawn(ship);
         } catch (RuntimeException ex) {
             displayManager.remove(ship.id());
@@ -97,8 +96,7 @@ public final class ShipActivationService {
                 try {
                     block.state().blockState().copy(target.getLocation()).update(true, false);
                 } catch (RuntimeException ignored) {
-                    // Keep the original activation error; a future restoration pass
-                    // can repair complex tile-state data.
+                    // Keep the original activation error.
                 }
             }
         }
@@ -114,29 +112,21 @@ public final class ShipActivationService {
             return Result.failure("Не найдено состояние активного корабля.");
         }
 
-        ship.state(ShipState.DEACTIVATING);
-        displayManager.remove(ship.id());
-
         World world = displayWorld(ship);
         if (world == null) {
             ship.state(ShipState.FAILED);
             return Result.failure("Мир корабля не найден.");
         }
 
+        ship.state(ShipState.DEACTIVATING);
+        // Flush first: players may still have a virtual inventory open.
+        storageManager.flushShip(ship.id());
+        storageManager.closeShip(ship.id());
+        displayManager.remove(ship.id());
+
         var current = runtime.position();
         try {
-            // Restore all real blocks at the ship's CURRENT position, not its
-            // original activation position.
-            for (ShipBlock block : ship.blocks()) {
-                Block target = world.getBlockAt(
-                        current.getBlockX() + block.x(),
-                        current.getBlockY() + block.y(),
-                        current.getBlockZ() + block.z());
-                target.setBlockData(block.blockData(), false);
-            }
-
-            // BlockEntity inventory/state restoration is handled by the storage
-            // layer. Do not pretend that setBlockData alone restores containers.
+            storageManager.restoreShip(ship, world, current);
             ship.state(ShipState.BUILT);
             registry.unregister(ship.id());
             return new Result(true, "Корабль деактивирован в текущей позиции и восстановлен как блоки.", ship);
@@ -147,19 +137,10 @@ public final class ShipActivationService {
     }
 
     private World displayWorld(ShipModel ship) {
-        return pluginWorld(ship);
-    }
-
-    private World pluginWorld(ShipModel ship) {
-        for (World world : registryWorlds()) {
+        for (World world : new HashSet<>(org.bukkit.Bukkit.getWorlds())) {
             if (world.getUID().equals(ship.worldId())) return world;
         }
         return null;
-    }
-
-    private Set<World> registryWorlds() {
-        return new HashSet<>(java.util.Objects.requireNonNullElseGet(
-                org.bukkit.Bukkit.getWorlds(), java.util.List::of));
     }
 
     public Result failureResult(String message) { return Result.failure(message); }
