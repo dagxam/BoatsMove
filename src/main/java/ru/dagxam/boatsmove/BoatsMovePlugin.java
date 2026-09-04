@@ -12,6 +12,7 @@ import ru.dagxam.boatsmove.ship.ShipDisplayManager;
 import ru.dagxam.boatsmove.ship.ShipMovementController;
 import ru.dagxam.boatsmove.ship.ShipPassengerManager;
 import ru.dagxam.boatsmove.ship.ShipRegistry;
+import ru.dagxam.boatsmove.ship.VirtualBlockInteraction;
 
 import java.util.HashSet;
 import java.util.Set;
@@ -49,6 +50,8 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         Material activationBlock = readMaterial("ships.activation-block", Material.OAK_BUTTON);
         getServer().getPluginManager().registerEvents(
                 new ShipActivationListener(activationBlock, activationService, passengerManager), this);
+        getServer().getPluginManager().registerEvents(
+                new VirtualBlockInteraction(shipRegistry), this);
 
         movementController.start();
 
