@@ -1,14 +1,15 @@
 # BoatsMove
-# Core configuration. The ship system is intentionally built in stages.
+# Core configuration. Ship activation is now implemented; movement/rendering come next.
 
 ships:
   activation-block: OAK_BUTTON
   max-blocks: 5000
   min-blocks: 2
 
-  # Blocks are denied by default because they are world/physics-sensitive.
-  # This list can be expanded as support is implemented.
+  # Blocks that cannot belong to a player-built ship.
   forbidden-blocks:
+    - STONE
+    - IRON_BLOCK
     - BEDROCK
     - END_PORTAL
     - END_PORTAL_FRAME
@@ -20,11 +21,9 @@ ships:
     - JIGSAW
     - BARRIER
 
-  # Keep this false until ship collision and world-interaction handling are ready.
   allow-activation-in-air: false
 
 movement:
-  # Boat-like behavior parameters. These will be tuned against vanilla boat feel.
   max-speed: 0.65
   acceleration: 0.035
   reverse-speed: 0.28
@@ -33,7 +32,6 @@ movement:
   vertical-snap: true
 
 storage:
-  # Ship snapshots are the source of truth while a ship is active.
   save-on-activation: true
   save-on-deactivation: true
   autosave-seconds: 30
