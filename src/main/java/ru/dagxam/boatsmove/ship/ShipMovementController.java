@@ -13,6 +13,7 @@ public final class ShipMovementController {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
     private final ShipDisplayManager displays;
+    private final ShipPassengerManager passengers;
     private final double maxSpeed;
     private final double acceleration;
     private final double reverseSpeed;
@@ -22,11 +23,12 @@ public final class ShipMovementController {
     private int taskId = -1;
 
     public ShipMovementController(JavaPlugin plugin, ShipRegistry registry, ShipDisplayManager displays,
-                                   double maxSpeed, double acceleration, double reverseSpeed,
-                                   double turnSpeed, double drag, boolean waterOnly) {
+                                   ShipPassengerManager passengers, double maxSpeed, double acceleration,
+                                   double reverseSpeed, double turnSpeed, double drag, boolean waterOnly) {
         this.plugin = plugin;
         this.registry = registry;
         this.displays = displays;
+        this.passengers = passengers;
         this.maxSpeed = Math.max(0.01, maxSpeed);
         this.acceleration = Math.max(0.001, acceleration);
         this.reverseSpeed = Math.max(0.01, reverseSpeed);
@@ -45,6 +47,7 @@ public final class ShipMovementController {
     }
 
     public void remove(ShipModel ship) {
+        passengers.clear(ship);
         registry.removeRuntime(ship.id());
     }
 
@@ -65,6 +68,7 @@ public final class ShipMovementController {
             Player pilot = plugin.getServer().getPlayer(ship.ownerId());
             if (pilot == null || !pilot.isOnline() || !pilot.getWorld().getUID().equals(ship.worldId())) {
                 applyDrag(runtime);
+                passengers.tick(ship);
                 continue;
             }
 
@@ -84,26 +88,27 @@ public final class ShipMovementController {
             }
 
             runtime.speed(speed);
-            if (Math.abs(speed) < 0.0001) continue;
+            if (Math.abs(speed) >= 0.0001) {
+                Vector direction = new Vector(
+                        -Math.sin(Math.toRadians(ship.yaw())),
+                        0,
+                        Math.cos(Math.toRadians(ship.yaw()))
+                );
 
-            Vector direction = new Vector(
-                    -Math.sin(Math.toRadians(ship.yaw())),
-                    0,
-                    Math.cos(Math.toRadians(ship.yaw()))
-            );
+                double dx = direction.getX() * speed;
+                double dz = direction.getZ() * speed;
+                Location current = runtime.position();
+                Location next = current.clone().add(dx, 0, dz);
 
-            double dx = direction.getX() * speed;
-            double dz = direction.getZ() * speed;
-            Location current = runtime.position();
-            Location next = current.clone().add(dx, 0, dz);
-
-            if (!canMove(ship, next)) {
-                runtime.speed(0.0);
-                continue;
+                if (canMove(ship, next)) {
+                    displays.translate(ship, dx, 0, dz);
+                    runtime.position(next);
+                } else {
+                    runtime.speed(0.0);
+                }
             }
 
-            displays.translate(ship, dx, 0, dz);
-            runtime.position(next);
+            passengers.tick(ship);
         }
     }
 
