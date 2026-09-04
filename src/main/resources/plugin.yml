@@ -1,0 +1,18 @@
+name: BoatsMove
+version: '${project.version}'
+main: ru.dagxam.boatsmove.BoatsMovePlugin
+api-version: '26.2'
+author: dagxam
+description: Player-built ships with Minecraft boat-like behavior.
+website: https://github.com/dagxam/BoatsMove
+
+commands:
+  boatsmove:
+    description: BoatsMove administration command
+    usage: /boatsmove <reload|status>
+    permission: boatsmove.admin
+
+permissions:
+  boatsmove.admin:
+    description: Allows BoatsMove administration commands
+    default: op
