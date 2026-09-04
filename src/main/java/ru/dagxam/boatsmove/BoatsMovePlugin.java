@@ -9,6 +9,7 @@ import org.bukkit.plugin.java.JavaPlugin;
 import ru.dagxam.boatsmove.ship.ShipActivationListener;
 import ru.dagxam.boatsmove.ship.ShipActivationService;
 import ru.dagxam.boatsmove.ship.ShipDisplayManager;
+import ru.dagxam.boatsmove.ship.ShipMovementController;
 import ru.dagxam.boatsmove.ship.ShipRegistry;
 
 import java.util.HashSet;
@@ -17,6 +18,7 @@ import java.util.Set;
 public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor {
     private ShipRegistry shipRegistry;
     private ShipDisplayManager displayManager;
+    private ShipMovementController movementController;
     private ShipActivationService activationService;
 
     @Override
@@ -27,11 +29,24 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
                 this,
                 Math.max(0, getConfig().getInt("movement.interpolation-ticks", 2))
         );
+        this.movementController = new ShipMovementController(
+                this,
+                shipRegistry,
+                displayManager,
+                getConfig().getDouble("movement.max-speed", 0.65),
+                getConfig().getDouble("movement.acceleration", 0.035),
+                getConfig().getDouble("movement.reverse-speed", 0.28),
+                getConfig().getDouble("movement.turn-speed", 2.5),
+                getConfig().getDouble("movement.drag", 0.90),
+                getConfig().getBoolean("movement.water-only", true)
+        );
         this.activationService = createActivationService();
 
         Material activationBlock = readMaterial("ships.activation-block", Material.OAK_BUTTON);
         getServer().getPluginManager().registerEvents(
                 new ShipActivationListener(activationBlock, activationService), this);
+
+        movementController.start();
 
         if (getCommand("boatsmove") != null) {
             getCommand("boatsmove").setExecutor(this);
@@ -43,6 +58,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
 
     @Override
     public void onDisable() {
+        if (movementController != null) movementController.stop();
         if (displayManager != null) displayManager.removeAll();
         if (shipRegistry != null) shipRegistry.clearRuntimeState();
         getLogger().info("BoatsMove disabled.");
@@ -77,6 +93,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
 
     public ShipRegistry getShipRegistry() { return shipRegistry; }
     public ShipDisplayManager getDisplayManager() { return displayManager; }
+    public ShipMovementController getMovementController() { return movementController; }
 
     @Override
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -92,7 +109,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         }
         if (args[0].equalsIgnoreCase("reload")) {
             reloadConfig();
-            sender.sendMessage(ChatColor.GREEN + "BoatsMove config перезагружен. Для изменения activation-block требуется перезапуск.");
+            sender.sendMessage(ChatColor.GREEN + "BoatsMove config перезагружен. Для изменения movement и activation-block перезапустите плагин.");
             return true;
         }
         sender.sendMessage(ChatColor.YELLOW + "Использование: /boatsmove <reload|status>");
