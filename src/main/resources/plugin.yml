@@ -8,8 +8,8 @@ website: https://github.com/dagxam/BoatsMove
 
 commands:
   boatsmove:
-    description: BoatsMove administration command
-    usage: /boatsmove <reload|status>
+    description: BoatsMove administration and ship control command
+    usage: /boatsmove <reload|status|save|deactivate>
     permission: boatsmove.admin
 
 permissions:
