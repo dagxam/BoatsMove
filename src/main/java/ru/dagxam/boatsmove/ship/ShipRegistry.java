@@ -8,16 +8,11 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * Runtime registry of logical ships and their active runtime state.
- *
- * The registry deliberately owns ShipModel/vehicle state rather than relying
- * on a vanilla Boat entity. A ship is a player-built structure first; boat
- * behavior is a controller layered on top of that structure.
- */
+/** Runtime registry of logical ships and their active runtime state. */
 public final class ShipRegistry {
     private final Map<UUID, ShipModel> ships = new LinkedHashMap<>();
     private final Map<UUID, ShipRuntimeState> runtime = new LinkedHashMap<>();
+    private VirtualChestManager storageManager;
 
     public void register(ShipModel ship) {
         ships.put(ship.id(), ship);
@@ -41,6 +36,14 @@ public final class ShipRegistry {
         runtime.computeIfAbsent(ship.id(), ignored -> new ShipRuntimeState(position)).position(position);
     }
 
+    public void storageManager(VirtualChestManager storageManager) {
+        this.storageManager = storageManager;
+    }
+
+    public VirtualChestManager storageManager() {
+        return storageManager;
+    }
+
     public void removeRuntime(UUID id) {
         runtime.remove(id);
     }
@@ -61,5 +64,6 @@ public final class ShipRegistry {
     public void clearRuntimeState() {
         ships.clear();
         runtime.clear();
+        storageManager = null;
     }
 }
