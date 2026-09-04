@@ -6,6 +6,7 @@ import org.bukkit.Location;
 public final class ShipRuntimeState {
     private Location position;
     private double speed;
+    private double verticalSpeed;
 
     public ShipRuntimeState(Location position) {
         this.position = position.clone();
@@ -25,5 +26,13 @@ public final class ShipRuntimeState {
 
     public void speed(double speed) {
         this.speed = speed;
+    }
+
+    public double verticalSpeed() {
+        return verticalSpeed;
+    }
+
+    public void verticalSpeed(double verticalSpeed) {
+        this.verticalSpeed = verticalSpeed;
     }
 }
