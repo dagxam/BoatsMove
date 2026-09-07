@@ -158,13 +158,14 @@ public final class VirtualChestManager implements Listener {
     }
 
     private org.bukkit.block.data.BlockData rotatedBlockData(ShipBlock block, int quarterTurns) {
-        org.bukkit.block.data.BlockData data = block.blockData();
-        return switch (rotationIndex(quarterTurns)) {
-            case 1 -> data.clone().rotate(StructureRotation.CLOCKWISE_90);
-            case 2 -> data.clone().rotate(StructureRotation.FLIPPED);
-            case 3 -> data.clone().rotate(StructureRotation.COUNTER_CLOCKWISE_90);
-            default -> data.clone();
-        };
+        org.bukkit.block.data.BlockData data = block.blockData().clone();
+        switch (rotationIndex(quarterTurns)) {
+            case 1 -> data.rotate(StructureRotation.CLOCKWISE_90);
+            case 2 -> data.rotate(StructureRotation.CLOCKWISE_180);
+            case 3 -> data.rotate(StructureRotation.COUNTERCLOCKWISE_90);
+            default -> { }
+        }
+        return data;
     }
 
     private boolean isStillActive(OpenStorage storage) {
