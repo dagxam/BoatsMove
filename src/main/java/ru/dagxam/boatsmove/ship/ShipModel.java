@@ -49,7 +49,12 @@ public final class ShipModel {
     public ShipClass shipClass() { return shipClass; }
     public void shipClass(ShipClass shipClass) { this.shipClass = shipClass == null ? ShipClass.SMALL : shipClass; }
     public double health() { return health; }
+    public void health(double health) { this.health = Math.max(0.0, Math.min(maxHealth, health)); }
     public double maxHealth() { return maxHealth; }
+    public void maxHealth(double maxHealth) {
+        this.maxHealth = Math.max(20.0, maxHealth);
+        this.health = Math.min(this.health, this.maxHealth);
+    }
     public double flooding() { return flooding; }
     public void flooding(double flooding) { this.flooding = Math.max(0.0, Math.min(1.0, flooding)); }
 
