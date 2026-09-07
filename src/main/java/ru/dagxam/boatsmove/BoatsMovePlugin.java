@@ -33,6 +33,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private VirtualChestManager storage;
     private ShipFloodingManager floodingManager;
     private int autosaveTask = -1;
+    private int floodingTask = -1;
 
     @Override
     public void onEnable() {
@@ -63,6 +64,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
             catch (RuntimeException ex) { ship.state(ru.dagxam.boatsmove.ship.ShipState.FAILED); getLogger().warning("Не удалось восстановить корабль " + ship.id() + ": " + ex.getMessage()); }
         }
         startAutosave();
+        startFloodingSimulation();
         movementController.start();
 
         if (getCommand("boatsmove") != null) getCommand("boatsmove").setExecutor(this);
@@ -73,6 +75,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     @Override
     public void onDisable() {
         if (autosaveTask != -1) getServer().getScheduler().cancelTask(autosaveTask);
+        if (floodingTask != -1) getServer().getScheduler().cancelTask(floodingTask);
         if (storage != null) storage.flushAll();
         if (persistence != null) persistence.saveAll();
         if (movementController != null) movementController.stop();
@@ -82,13 +85,18 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         getLogger().info("BoatsMove disabled.");
     }
 
+    private void startFloodingSimulation() {
+        floodingTask = getServer().getScheduler().runTaskTimer(this, () -> {
+            if (floodingManager != null) floodingManager.tick();
+        }, 1L, 1L).getTaskId();
+    }
+
     private void startAutosave() {
         long seconds = Math.max(5, getConfig().getLong("storage.autosave-seconds", 30));
         autosaveTask = getServer().getScheduler().runTaskTimer(this, () -> {
-            if (floodingManager != null) floodingManager.tick();
             if (storage != null) storage.flushAll();
             if (persistence != null) persistence.saveAll();
-        }, seconds * 20L, 20L).getTaskId();
+        }, seconds * 20L, seconds * 20L).getTaskId();
     }
 
     private ShipActivationService createActivationService() {
