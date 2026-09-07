@@ -16,7 +16,7 @@ import java.util.UUID;
 /** Renders an active ship as its original blocks using display entities. */
 public final class ShipDisplayManager {
     private final JavaPlugin plugin;
-    private final Map<UUID, List<BlockDisplay>> displays = new HashMap<>();
+    private final Map<UUID, Map<BlockKey, BlockDisplay>> displays = new HashMap<>();
     private final int interpolationTicks;
 
     public ShipDisplayManager(JavaPlugin plugin, int interpolationTicks) {
@@ -29,7 +29,7 @@ public final class ShipDisplayManager {
         World world = plugin.getServer().getWorld(ship.worldId());
         if (world == null) throw new IllegalStateException("Мир корабля не найден.");
         Location origin = ship.origin();
-        List<BlockDisplay> created = new ArrayList<>(ship.blockCount());
+        Map<BlockKey, BlockDisplay> created = new HashMap<>();
         try {
             for (ShipBlock block : ship.blocks()) {
                 Location location = origin.clone().add(block.x(), block.y(), block.z());
@@ -42,11 +42,11 @@ public final class ShipDisplayManager {
                     entity.getPersistentDataContainer().set(new org.bukkit.NamespacedKey(plugin, "ship_id"),
                             org.bukkit.persistence.PersistentDataType.STRING, ship.id().toString());
                 });
-                created.add(display);
+                created.put(new BlockKey(block.x(), block.y(), block.z()), display);
             }
             displays.put(ship.id(), created);
         } catch (RuntimeException ex) {
-            for (BlockDisplay display : created) display.remove();
+            for (BlockDisplay display : created.values()) display.remove();
             throw ex;
         }
     }
@@ -57,17 +57,14 @@ public final class ShipDisplayManager {
 
     /** Updates every display to the exact rigid-body pose, including buoyancy tilt. */
     public void updatePose(ShipModel ship, Location position, float yaw, float pitch, float roll) {
-        List<BlockDisplay> list = displays.get(ship.id());
-        if (list == null || position == null) return;
+        Map<BlockKey, BlockDisplay> map = displays.get(ship.id());
+        if (map == null || position == null) return;
         double relativeYaw = Math.toRadians(yaw - ship.origin().getYaw());
         double sin = Math.sin(relativeYaw), cos = Math.cos(relativeYaw);
         double p = Math.toRadians(pitch), r = Math.toRadians(roll);
-        List<ShipBlock> blocks = ship.blocks();
-        int count = Math.min(list.size(), blocks.size());
-        for (int i = 0; i < count; i++) {
-            BlockDisplay display = list.get(i);
-            ShipBlock block = blocks.get(i);
-            if (!display.isValid()) continue;
+        for (ShipBlock block : ship.blocks()) {
+            BlockDisplay display = map.get(new BlockKey(block.x(), block.y(), block.z()));
+            if (display == null || !display.isValid()) continue;
 
             double x = block.x(), y = block.y(), z = block.z();
             double yawX = x * cos - z * sin;
@@ -87,20 +84,32 @@ public final class ShipDisplayManager {
     }
 
     public void translate(ShipModel ship, double dx, double dy, double dz) {
-        List<BlockDisplay> list = displays.get(ship.id());
-        if (list == null) return;
-        for (BlockDisplay display : list) if (display.isValid()) display.teleport(display.getLocation().add(dx, dy, dz));
+        Map<BlockKey, BlockDisplay> map = displays.get(ship.id());
+        if (map == null) return;
+        for (BlockDisplay display : map.values()) if (display.isValid()) display.teleport(display.getLocation().add(dx, dy, dz));
+    }
+
+    /** Removes the display belonging to one exact local ship block. */
+    public boolean removeBlock(UUID shipId, int x, int y, int z) {
+        Map<BlockKey, BlockDisplay> map = displays.get(shipId);
+        if (map == null) return false;
+        BlockDisplay display = map.remove(new BlockKey(x, y, z));
+        if (display == null) return false;
+        if (display.isValid()) display.remove();
+        return true;
     }
 
     public void remove(UUID shipId) {
-        List<BlockDisplay> list = displays.remove(shipId);
-        if (list == null) return;
-        for (BlockDisplay display : list) if (display.isValid()) display.remove();
+        Map<BlockKey, BlockDisplay> map = displays.remove(shipId);
+        if (map == null) return;
+        for (BlockDisplay display : map.values()) if (display.isValid()) display.remove();
     }
 
     public void removeAll() {
         for (UUID id : new ArrayList<>(displays.keySet())) remove(id);
     }
 
-    public int displayCount(UUID shipId) { return displays.getOrDefault(shipId, List.of()).size(); }
+    public int displayCount(UUID shipId) { return displays.getOrDefault(shipId, Map.of()).size(); }
+
+    private record BlockKey(int x, int y, int z) { }
 }
