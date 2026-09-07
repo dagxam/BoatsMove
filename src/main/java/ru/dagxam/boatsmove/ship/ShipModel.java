@@ -22,6 +22,10 @@ public final class ShipModel {
     private double health;
     private double maxHealth;
     private double flooding;
+    private double floodFront;
+    private double floodRear;
+    private double floodLeft;
+    private double floodRight;
 
     public ShipModel(UUID id, UUID ownerId, World world, Location origin, List<ShipBlock> blocks) {
         this.id = id;
@@ -58,6 +62,18 @@ public final class ShipModel {
     }
     public double flooding() { return flooding; }
     public void flooding(double flooding) { this.flooding = Math.max(0.0, Math.min(1.0, flooding)); }
+    public double floodFront() { return floodFront; }
+    public double floodRear() { return floodRear; }
+    public double floodLeft() { return floodLeft; }
+    public double floodRight() { return floodRight; }
+    public void floodSides(double front, double rear, double left, double right) {
+        this.floodFront = clamp01(front);
+        this.floodRear = clamp01(rear);
+        this.floodLeft = clamp01(left);
+        this.floodRight = clamp01(right);
+    }
+
+    private static double clamp01(double value) { return Math.max(0.0, Math.min(1.0, value)); }
 
     public double damage(double amount) {
         if (amount <= 0) return health;
