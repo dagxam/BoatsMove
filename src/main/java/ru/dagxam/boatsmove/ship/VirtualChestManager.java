@@ -123,6 +123,11 @@ public final class VirtualChestManager implements Listener {
                     origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
             snapshot.blockState().copy(target.getLocation()).update(true, false);
         }
+        restoreInventoriesOnly(ship, world, origin, quarterTurns);
+    }
+
+    /** Restores only container inventories after all BlockData/TileState has been applied. */
+    public void restoreInventoriesOnly(ShipModel ship, World world, org.bukkit.Location origin, int quarterTurns) {
         for (ShipBlock block : ship.blocks()) {
             ShipBlockState snapshot = block.state();
             if (snapshot == null || !snapshot.hasInventory()) continue;
