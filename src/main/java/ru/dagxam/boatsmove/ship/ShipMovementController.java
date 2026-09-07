@@ -132,12 +132,21 @@ public final class ShipMovementController {
         double sizeFactor = clamp(Math.cbrt(ship.blockCount() / 16.0), 0.75, 1.75);
         double desiredImmersion = clamp(0.34 + 0.10 * (sizeFactor - 0.75), 0.30, 0.50);
         desiredImmersion += ship.flooding() * 0.18 / Math.max(0.75, ship.shipClass().buoyancyMultiplier());
-        double targetBottom = water.averageSurface - desiredImmersion * height;
+
+        // Flooding increases draft non-linearly. Above 72% flooding the vessel
+        // begins a real sinking motion instead of merely sitting lower in water.
+        double sinkFraction = clamp((ship.flooding() - 0.72) / 0.28, 0.0, 1.0);
+        double sinkDepth = height * (0.55 * sinkFraction * sinkFraction);
+        double targetBottom = water.averageSurface - desiredImmersion * height - sinkDepth;
         double error = targetBottom - bottom;
         double vertical = runtime.verticalSpeed() + error * buoyancyStrength * ship.shipClass().buoyancyMultiplier();
         vertical *= verticalDamping;
         vertical = clamp(vertical, -maxVerticalStep, maxVerticalStep);
         if (Math.abs(error) < 0.02) vertical *= 0.45;
+        if (ship.flooding() > 0.72) {
+            double forcedSink = -0.012 - sinkFraction * 0.073;
+            vertical = Math.min(vertical, forcedSink);
+        }
         runtime.verticalSpeed(vertical);
         runtime.position(pos.clone().add(0, vertical, 0));
 
@@ -147,6 +156,13 @@ public final class ShipMovementController {
         double right = water.rightSurface - water.averageSurface;
         float targetPitch = (float) clamp((front - rear) * -4.5, -maxTilt, maxTilt);
         float targetRoll = (float) clamp((right - left) * 4.5, -maxTilt, maxTilt);
+
+        // A breached side gets a persistent list toward that side. This is
+        // combined with wave trim rather than replacing it.
+        targetPitch += (float) ((ship.floodRear() - ship.floodFront()) * 5.0);
+        targetRoll += (float) ((ship.floodRight() - ship.floodLeft()) * 5.0);
+        targetPitch = (float) clamp(targetPitch, -maxTilt, maxTilt);
+        targetRoll = (float) clamp(targetRoll, -maxTilt, maxTilt);
         runtime.pitch(approach(runtime.pitch(), targetPitch, 0.18f));
         runtime.roll(approach(runtime.roll(), targetRoll, 0.18f));
     }
@@ -171,6 +187,7 @@ public final class ShipMovementController {
                 {(minX + maxX) * 0.5, (minZ + maxZ) * 0.5}
         };
         double[] surfaces = new double[5];
+        boolean[] valid = new boolean[5];
         int count = 0;
         for (int i = 0; i < points.length; i++) {
             double wx = position.getX() + points[i][0];
@@ -179,13 +196,17 @@ public final class ShipMovementController {
             if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
             double surface = findSurface(world, x, z, (int) Math.floor(position.getY() + minY) - 2,
                     (int) Math.ceil(position.getY() + maxY) + 2);
-            if (!Double.isNaN(surface)) { surfaces[i] = surface; count++; }
+            if (!Double.isNaN(surface)) { surfaces[i] = surface; valid[i] = true; count++; }
         }
         if (count == 0) return WaterState.empty();
         double average = 0;
-        for (int i = 0; i < surfaces.length; i++) if (i < count || surfaces[i] != 0) average += surfaces[i];
+        for (int i = 0; i < surfaces.length; i++) if (valid[i]) average += surfaces[i];
         average /= count;
-        return new WaterState(count, average, surfaces[0], surfaces[1], surfaces[2], surfaces[3],
+        double front = valid[0] ? surfaces[0] : average;
+        double rear = valid[1] ? surfaces[1] : average;
+        double left = valid[2] ? surfaces[2] : average;
+        double right = valid[3] ? surfaces[3] : average;
+        return new WaterState(count, average, front, rear, left, right,
                 isShallow(world, position, minX, maxX, minZ, maxZ));
     }
 
