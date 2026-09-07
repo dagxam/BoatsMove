@@ -50,7 +50,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         this.storage = new VirtualChestManager(shipRegistry);
         getServer().getPluginManager().registerEvents(storage, this);
         VirtualBlockInteraction interaction = new VirtualBlockInteraction(shipRegistry, storage);
-        interaction.damageManager(new ShipDamageManager(shipRegistry, activationService));
+        interaction.damageManager(new ShipDamageManager(shipRegistry, activationService, displayManager));
         getServer().getPluginManager().registerEvents(interaction, this);
         getServer().getPluginManager().registerEvents(new ShipProtectionListener(shipRegistry), this);
 
