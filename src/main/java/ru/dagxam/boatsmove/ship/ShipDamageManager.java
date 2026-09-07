@@ -36,7 +36,7 @@ public final class ShipDamageManager {
         if (!ship.containsBlock(target.x(), target.y(), target.z())) return false;
 
         VirtualChestManager storage = registry.storageManager();
-        if (storage != null) storage.flushShip(ship.id());
+        if (storage != null) storage.closeShip(ship.id());
         dropContainerContents(target, dropLocation);
 
         Optional<ShipBlock> removed = ship.removeBlock(target.x(), target.y(), target.z());
