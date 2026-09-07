@@ -2,6 +2,7 @@ package ru.dagxam.boatsmove.ship;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.Rotation;
 import org.bukkit.World;
 import org.bukkit.block.data.type.Chest;
 import org.bukkit.entity.Player;
@@ -105,23 +106,63 @@ public final class VirtualChestManager implements Listener {
 
     /** Restores block data, captured TileState, then inventory contents. */
     public void restoreShip(ShipModel ship, World world, org.bukkit.Location origin) {
+        restoreShip(ship, world, origin, 0);
+    }
+
+    /** Restores a ship at an axis-aligned 90-degree yaw. */
+    public void restoreShip(ShipModel ship, World world, org.bukkit.Location origin, int quarterTurns) {
         for (ShipBlock block : ship.blocks()) {
-            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + block.x(), origin.getBlockY() + block.y(), origin.getBlockZ() + block.z());
-            target.setBlockData(block.blockData(), false);
+            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
+                    origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
+            target.setBlockData(rotatedBlockData(block, quarterTurns), false);
         }
         for (ShipBlock block : ship.blocks()) {
             ShipBlockState snapshot = block.state();
             if (snapshot == null || snapshot.blockState() == null) continue;
-            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + block.x(), origin.getBlockY() + block.y(), origin.getBlockZ() + block.z());
+            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
+                    origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
             snapshot.blockState().copy(target.getLocation()).update(true, false);
         }
         for (ShipBlock block : ship.blocks()) {
             ShipBlockState snapshot = block.state();
             if (snapshot == null || !snapshot.hasInventory()) continue;
-            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + block.x(), origin.getBlockY() + block.y(), origin.getBlockZ() + block.z());
+            org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
+                    origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
             org.bukkit.block.BlockState current = target.getState();
-            if (current instanceof org.bukkit.block.Container container) container.getInventory().setContents(trimToSize(snapshot.inventory(), container.getInventory().getSize()));
+            if (current instanceof org.bukkit.block.Container container) {
+                container.getInventory().setContents(trimToSize(snapshot.inventory(), container.getInventory().getSize()));
+            }
         }
+    }
+
+    private int rotationIndex(int quarterTurns) { return Math.floorMod(quarterTurns, 4); }
+
+    private int rotatedX(ShipBlock block, int quarterTurns) {
+        return switch (rotationIndex(quarterTurns)) {
+            case 1 -> -block.z();
+            case 2 -> -block.x();
+            case 3 -> block.z();
+            default -> block.x();
+        };
+    }
+
+    private int rotatedZ(ShipBlock block, int quarterTurns) {
+        return switch (rotationIndex(quarterTurns)) {
+            case 1 -> block.x();
+            case 2 -> -block.z();
+            case 3 -> -block.x();
+            default -> block.z();
+        };
+    }
+
+    private org.bukkit.block.data.BlockData rotatedBlockData(ShipBlock block, int quarterTurns) {
+        org.bukkit.block.data.BlockData data = block.blockData();
+        return switch (rotationIndex(quarterTurns)) {
+            case 1 -> data.clone().rotate(Rotation.CLOCKWISE_90);
+            case 2 -> data.clone().rotate(Rotation.FLIPPED);
+            case 3 -> data.clone().rotate(Rotation.COUNTER_CLOCKWISE_90);
+            default -> data.clone();
+        };
     }
 
     private boolean isStillActive(OpenStorage storage) {
