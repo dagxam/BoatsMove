@@ -2,9 +2,9 @@ package ru.dagxam.boatsmove.ship;
 
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
-import org.bukkit.Rotation;
 import org.bukkit.World;
 import org.bukkit.block.data.type.Chest;
+import org.bukkit.block.structure.StructureRotation;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
@@ -104,12 +104,10 @@ public final class VirtualChestManager implements Listener {
         }
     }
 
-    /** Restores block data, captured TileState, then inventory contents. */
     public void restoreShip(ShipModel ship, World world, org.bukkit.Location origin) {
         restoreShip(ship, world, origin, 0);
     }
 
-    /** Restores a ship at an axis-aligned 90-degree yaw. */
     public void restoreShip(ShipModel ship, World world, org.bukkit.Location origin, int quarterTurns) {
         for (ShipBlock block : ship.blocks()) {
             org.bukkit.block.Block target = world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
@@ -126,7 +124,6 @@ public final class VirtualChestManager implements Listener {
         restoreInventoriesOnly(ship, world, origin, quarterTurns);
     }
 
-    /** Restores only container inventories after all BlockData/TileState has been applied. */
     public void restoreInventoriesOnly(ShipModel ship, World world, org.bukkit.Location origin, int quarterTurns) {
         for (ShipBlock block : ship.blocks()) {
             ShipBlockState snapshot = block.state();
@@ -163,9 +160,9 @@ public final class VirtualChestManager implements Listener {
     private org.bukkit.block.data.BlockData rotatedBlockData(ShipBlock block, int quarterTurns) {
         org.bukkit.block.data.BlockData data = block.blockData();
         return switch (rotationIndex(quarterTurns)) {
-            case 1 -> data.clone().rotate(Rotation.CLOCKWISE_90);
-            case 2 -> data.clone().rotate(Rotation.FLIPPED);
-            case 3 -> data.clone().rotate(Rotation.COUNTER_CLOCKWISE_90);
+            case 1 -> data.clone().rotate(StructureRotation.CLOCKWISE_90);
+            case 2 -> data.clone().rotate(StructureRotation.FLIPPED);
+            case 3 -> data.clone().rotate(StructureRotation.COUNTER_CLOCKWISE_90);
             default -> data.clone();
         };
     }
