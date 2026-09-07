@@ -41,11 +41,10 @@ public final class VirtualBlockInteraction implements Listener {
         if (hit == null) return;
         event.setCancelled(true);
 
-        if ((action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK)
-                && chests.open(player, hit)) return;
+        if ((action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK) && chests.open(player, hit)) return;
 
         if ((action == Action.LEFT_CLICK_AIR || action == Action.LEFT_CLICK_BLOCK) && damageManager != null) {
-            damageManager.damage(hit.ship(), 1.0, player);
+            damageManager.damageBlock(hit.ship(), hit.block(), hit.hitCenter().toLocation(player.getWorld()), player);
             return;
         }
         player.sendActionBar("§7Корабль: §f" + hit.block().blockData().getMaterial().name());
