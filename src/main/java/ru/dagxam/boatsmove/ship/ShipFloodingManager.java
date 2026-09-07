@@ -48,8 +48,8 @@ public final class ShipFloodingManager {
         Set<Pos> outside = floodOutside(hull, minX, maxX, minY, maxY, minZ, maxZ);
         Set<Pos> interior = new HashSet<>();
         int enclosedCells = 0;
-        for (int x = minX + 1; x < maxX; x++) {
-            for (int y = minY + 1; y < maxY; y++) {
+        for (int x = minX + 1; x < maxX && enclosedCells < MAX_CELLS; x++) {
+            for (int y = minY + 1; y < maxY && enclosedCells < MAX_CELLS; y++) {
                 for (int z = minZ + 1; z < maxZ; z++) {
                     Pos p = new Pos(x, y, z);
                     if (!hull.contains(p) && !outside.contains(p)) {
@@ -57,13 +57,10 @@ public final class ShipFloodingManager {
                         if (++enclosedCells >= MAX_CELLS) break;
                     }
                 }
-                if (enclosedCells >= MAX_CELLS) break;
             }
-            if (enclosedCells >= MAX_CELLS) break;
         }
 
         if (interior.isEmpty()) {
-            // No enclosed volume means water cannot accumulate inside this hull.
             ship.flooding(Math.max(0.0, ship.flooding() - DRAIN_RATE));
             return;
         }
@@ -80,13 +77,11 @@ public final class ShipFloodingManager {
             if (leaks >= 32) break;
         }
 
-        double target = Math.min(1.0, (leaks * FLOOD_PER_HOLE) + (interior.size() / 8192.0) * ship.flooding());
         double current = ship.flooding();
         if (leaks > 0) {
             current = Math.min(1.0, current + Math.min(MAX_FLOOD_GROWTH_PER_TICK, leaks * FLOOD_PER_HOLE));
         } else if (current > 0.0) {
-            // A closed hull slowly loses accumulated water only when no external leak remains.
-            current = Math.max(target, current - DRAIN_RATE);
+            current = Math.max(0.0, current - DRAIN_RATE);
         }
         ship.flooding(current);
     }
@@ -98,16 +93,15 @@ public final class ShipFloodingManager {
         int z = (int) Math.floor(position.getZ() + transformed.z + 0.5);
         if (!world.isChunkLoaded(x >> 4, z >> 4)) return false;
         Material at = world.getBlockAt(x, y, z).getType();
-        if (at == Material.WATER) return true;
-        return world.getBlockAt(x, y + 1, z).getType() == Material.WATER;
+        return at == Material.WATER || world.getBlockAt(x, y + 1, z).getType() == Material.WATER;
     }
 
     private Pos rotateLocal(Pos p, double degrees) {
         int quarterTurns = Math.floorMod((int) Math.round(degrees / 90.0), 4);
         return switch (quarterTurns) {
-            case 1 -> new Pos(-p.z, p.x, p.y);
-            case 2 -> new Pos(-p.x, -p.y, p.z);
-            case 3 -> new Pos(p.z, -p.x, p.y);
+            case 1 -> new Pos(-p.z, p.y, p.x);
+            case 2 -> new Pos(-p.x, p.y, -p.z);
+            case 3 -> new Pos(p.z, p.y, -p.x);
             default -> p;
         };
     }
