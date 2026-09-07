@@ -11,6 +11,7 @@ import ru.dagxam.boatsmove.ship.ShipActivationListener;
 import ru.dagxam.boatsmove.ship.ShipActivationService;
 import ru.dagxam.boatsmove.ship.ShipDamageManager;
 import ru.dagxam.boatsmove.ship.ShipDisplayManager;
+import ru.dagxam.boatsmove.ship.ShipFloodVisualManager;
 import ru.dagxam.boatsmove.ship.ShipFloodingManager;
 import ru.dagxam.boatsmove.ship.ShipMovementController;
 import ru.dagxam.boatsmove.ship.ShipPassengerManager;
@@ -32,6 +33,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private ShipPersistenceManager persistence;
     private VirtualChestManager storage;
     private ShipFloodingManager floodingManager;
+    private ShipFloodVisualManager floodVisualManager;
     private int autosaveTask = -1;
     private int floodingTask = -1;
 
@@ -58,6 +60,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         getServer().getPluginManager().registerEvents(new ShipProtectionListener(shipRegistry), this);
 
         this.floodingManager = new ShipFloodingManager(shipRegistry, displayManager);
+        this.floodVisualManager = new ShipFloodVisualManager(this, shipRegistry);
         int loaded = persistence.loadAll();
         for (var ship : shipRegistry.all()) {
             try { displayManager.spawn(ship); }
@@ -80,6 +83,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         if (persistence != null) persistence.saveAll();
         if (movementController != null) movementController.stop();
         if (passengerManager != null) passengerManager.clearAll();
+        if (floodVisualManager != null) floodVisualManager.clearAll();
         if (displayManager != null) displayManager.removeAll();
         if (shipRegistry != null) shipRegistry.clearRuntimeState();
         getLogger().info("BoatsMove disabled.");
@@ -88,6 +92,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private void startFloodingSimulation() {
         floodingTask = getServer().getScheduler().runTaskTimer(this, () -> {
             if (floodingManager != null) floodingManager.tick();
+            if (floodVisualManager != null) floodVisualManager.tick();
         }, 1L, 1L).getTaskId();
     }
 
