@@ -49,6 +49,7 @@ public final class ShipFloodingManager {
 
         if (cache.compartments.isEmpty()) {
             ship.flooding(Math.max(0.0, ship.flooding() - DRAIN_PER_TICK));
+            ship.floodSides(0.0, 0.0, 0.0, 0.0);
             return;
         }
 
@@ -103,6 +104,7 @@ public final class ShipFloodingManager {
         state.rear = (double) rearLeaks / sideTotal;
         state.left = (double) leftLeaks / sideTotal;
         state.right = (double) rightLeaks / sideTotal;
+        ship.floodSides(state.front, state.rear, state.left, state.right);
 
         applySinking(ship, state);
     }
