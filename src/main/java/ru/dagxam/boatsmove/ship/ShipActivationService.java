@@ -7,7 +7,9 @@ import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 
 /** Performs activation/deactivation transactions for logical ships. */
@@ -110,7 +112,7 @@ public final class ShipActivationService {
             ship.pitch(0.0f);
             ship.state(ShipState.BUILT);
             registry.unregister(ship.id());
-            return new Result(true, "Корабль деактивирован и восстановлен в ближайшей допустимой ориентации блоков.", ship);
+            return new Result(true, "Корабль деактивирован и полностью восстановлен в ближайшей допустимой ориентации блоков.", ship);
         } catch (RuntimeException ex) {
             ship.state(ShipState.FAILED);
             return Result.failure("Восстановление остановлено для безопасности: " + ex.getMessage());
@@ -128,9 +130,7 @@ public final class ShipActivationService {
         return result;
     }
 
-    private int rotationIndex(int quarterTurns) {
-        return Math.floorMod(quarterTurns, 4);
-    }
+    private int rotationIndex(int quarterTurns) { return Math.floorMod(quarterTurns, 4); }
 
     private int rotatedX(ShipBlock block, int quarterTurns) {
         return switch (rotationIndex(quarterTurns)) {
@@ -179,20 +179,73 @@ public final class ShipActivationService {
         };
     }
 
+    /**
+     * Restores the hull in three strict phases: block data, TileState, inventories.
+     * If any phase fails, all destination blocks are rolled back to their exact
+     * pre-restore BlockData so deactivation never leaves a half-materialized ship.
+     */
     private void restoreShip(ShipModel ship, World world, org.bukkit.Location origin, int quarterTurns) {
-        for (ShipBlock block : ship.blocks()) {
-            Block target = world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
-                    origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
-            target.setBlockData(rotatedBlockData(block, quarterTurns), false);
-        }
-        for (ShipBlock block : ship.blocks()) {
-            Block target = world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
-                    origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
-            if (block.state() != null && block.state().blockState() != null) {
-                block.state().blockState().copy(target.getLocation()).update(true, false);
+        Map<String, Block> targets = new HashMap<>();
+        Map<String, org.bukkit.block.data.BlockData> originalData = new HashMap<>();
+        try {
+            for (ShipBlock block : ship.blocks()) {
+                int x = origin.getBlockX() + rotatedX(block, quarterTurns);
+                int y = origin.getBlockY() + block.y();
+                int z = origin.getBlockZ() + rotatedZ(block, quarterTurns);
+                String key = x + ":" + y + ":" + z;
+                Block target = world.getBlockAt(x, y, z);
+                targets.put(key, target);
+                originalData.putIfAbsent(key, target.getBlockData());
             }
+
+            // Phase 1: materialize every block and verify the resulting BlockData.
+            for (ShipBlock block : ship.blocks()) {
+                Block target = targetFor(world, origin, block, quarterTurns);
+                org.bukkit.block.data.BlockData expected = rotatedBlockData(block, quarterTurns);
+                target.setBlockData(expected, false);
+                if (!target.getBlockData().matches(expected)) {
+                    throw new IllegalStateException("BlockData не восстановился в " + target.getLocation());
+                }
+            }
+
+            // Phase 2: restore captured TileState after all blocks exist.
+            for (ShipBlock block : ship.blocks()) {
+                ShipBlockState snapshot = block.state();
+                if (snapshot == null || snapshot.blockState() == null) continue;
+                Block target = targetFor(world, origin, block, quarterTurns);
+                snapshot.blockState().copy(target.getLocation()).update(true, false);
+            }
+
+            // Phase 3: restore inventories last, after their TileState exists.
+            VirtualChestManager storage = registry.storageManager();
+            if (storage != null) storage.restoreInventoriesOnly(ship, world, origin, quarterTurns);
+
+            // A container snapshot must end up on an actual container block.
+            for (ShipBlock block : ship.blocks()) {
+                ShipBlockState snapshot = block.state();
+                if (snapshot == null || !snapshot.hasInventory()) continue;
+                Block target = targetFor(world, origin, block, quarterTurns);
+                if (!(target.getState() instanceof org.bukkit.block.Container)) {
+                    throw new IllegalStateException("Не удалось восстановить контейнер " + target.getLocation());
+                }
+            }
+        } catch (RuntimeException ex) {
+            for (org.bukkit.block.data.BlockData data : originalData.values()) {
+                // handled below through the coordinate key map
+            }
+            for (Map.Entry<String, Block> entry : targets.entrySet()) {
+                org.bukkit.block.data.BlockData data = originalData.get(entry.getKey());
+                if (data != null) {
+                    try { entry.getValue().setBlockData(data, false); } catch (RuntimeException ignored) { }
+                }
+            }
+            throw new IllegalStateException("Ошибка полной материализации: " + ex.getMessage(), ex);
         }
-        if (registry.storageManager() != null) registry.storageManager().restoreInventoriesOnly(ship, world, origin, quarterTurns);
+    }
+
+    private Block targetFor(World world, org.bukkit.Location origin, ShipBlock block, int quarterTurns) {
+        return world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
+                origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
     }
 
     private World displayWorld(ShipModel ship) {
