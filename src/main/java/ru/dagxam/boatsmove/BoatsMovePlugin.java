@@ -11,6 +11,7 @@ import ru.dagxam.boatsmove.ship.ShipActivationListener;
 import ru.dagxam.boatsmove.ship.ShipActivationService;
 import ru.dagxam.boatsmove.ship.ShipDamageManager;
 import ru.dagxam.boatsmove.ship.ShipDisplayManager;
+import ru.dagxam.boatsmove.ship.ShipFloodingManager;
 import ru.dagxam.boatsmove.ship.ShipMovementController;
 import ru.dagxam.boatsmove.ship.ShipPassengerManager;
 import ru.dagxam.boatsmove.ship.ShipPersistenceManager;
@@ -30,6 +31,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private ShipActivationService activationService;
     private ShipPersistenceManager persistence;
     private VirtualChestManager storage;
+    private ShipFloodingManager floodingManager;
     private int autosaveTask = -1;
 
     @Override
@@ -54,6 +56,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         getServer().getPluginManager().registerEvents(interaction, this);
         getServer().getPluginManager().registerEvents(new ShipProtectionListener(shipRegistry), this);
 
+        this.floodingManager = new ShipFloodingManager(shipRegistry, displayManager);
         int loaded = persistence.loadAll();
         for (var ship : shipRegistry.all()) {
             try { displayManager.spawn(ship); }
@@ -82,9 +85,10 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private void startAutosave() {
         long seconds = Math.max(5, getConfig().getLong("storage.autosave-seconds", 30));
         autosaveTask = getServer().getScheduler().runTaskTimer(this, () -> {
+            if (floodingManager != null) floodingManager.tick();
             if (storage != null) storage.flushAll();
             if (persistence != null) persistence.saveAll();
-        }, seconds * 20L, seconds * 20L).getTaskId();
+        }, seconds * 20L, 20L).getTaskId();
     }
 
     private ShipActivationService createActivationService() {
