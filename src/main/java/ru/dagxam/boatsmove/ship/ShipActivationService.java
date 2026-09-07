@@ -2,9 +2,9 @@ package ru.dagxam.boatsmove.ship;
 
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
-import org.bukkit.Rotation;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.structure.StructureRotation;
 import org.bukkit.entity.Player;
 
 import java.util.HashMap;
@@ -84,8 +84,6 @@ public final class ShipActivationService {
         World world = displayWorld(ship);
         if (world == null) return Result.failure("Мир корабля не найден.");
 
-        // Real Minecraft blocks are axis-aligned. Continuous pitch/roll cannot be materialized
-        // as blocks, so deactivation uses the nearest 90-degree yaw and a level hull.
         int quarterTurns = nearestQuarterTurn(ship, runtime);
         org.bukkit.Location current = runtime.position();
         org.bukkit.Location restoreOrigin = current.clone();
@@ -172,9 +170,9 @@ public final class ShipActivationService {
     private org.bukkit.block.data.BlockData rotatedBlockData(ShipBlock block, int quarterTurns) {
         org.bukkit.block.data.BlockData data = block.blockData();
         return switch (rotationIndex(quarterTurns)) {
-            case 1 -> data.clone().rotate(Rotation.CLOCKWISE_90);
-            case 2 -> data.clone().rotate(Rotation.FLIPPED);
-            case 3 -> data.clone().rotate(Rotation.COUNTER_CLOCKWISE_90);
+            case 1 -> data.clone().rotate(StructureRotation.CLOCKWISE_90);
+            case 2 -> data.clone().rotate(StructureRotation.FLIPPED);
+            case 3 -> data.clone().rotate(StructureRotation.COUNTER_CLOCKWISE_90);
             default -> data.clone();
         };
     }
@@ -198,7 +196,6 @@ public final class ShipActivationService {
                 originalData.putIfAbsent(key, target.getBlockData());
             }
 
-            // Phase 1: materialize every block and verify the resulting BlockData.
             for (ShipBlock block : ship.blocks()) {
                 Block target = targetFor(world, origin, block, quarterTurns);
                 org.bukkit.block.data.BlockData expected = rotatedBlockData(block, quarterTurns);
@@ -208,7 +205,6 @@ public final class ShipActivationService {
                 }
             }
 
-            // Phase 2: restore captured TileState after all blocks exist.
             for (ShipBlock block : ship.blocks()) {
                 ShipBlockState snapshot = block.state();
                 if (snapshot == null || snapshot.blockState() == null) continue;
@@ -216,11 +212,9 @@ public final class ShipActivationService {
                 snapshot.blockState().copy(target.getLocation()).update(true, false);
             }
 
-            // Phase 3: restore inventories last, after their TileState exists.
             VirtualChestManager storage = registry.storageManager();
             if (storage != null) storage.restoreInventoriesOnly(ship, world, origin, quarterTurns);
 
-            // A container snapshot must end up on an actual container block.
             for (ShipBlock block : ship.blocks()) {
                 ShipBlockState snapshot = block.state();
                 if (snapshot == null || !snapshot.hasInventory()) continue;
@@ -230,9 +224,6 @@ public final class ShipActivationService {
                 }
             }
         } catch (RuntimeException ex) {
-            for (org.bukkit.block.data.BlockData data : originalData.values()) {
-                // handled below through the coordinate key map
-            }
             for (Map.Entry<String, Block> entry : targets.entrySet()) {
                 org.bukkit.block.data.BlockData data = originalData.get(entry.getKey());
                 if (data != null) {
