@@ -2,13 +2,13 @@ package ru.dagxam.boatsmove.ship;
 
 import org.bukkit.ChatColor;
 import org.bukkit.Material;
+import org.bukkit.Rotation;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.entity.Player;
 
 import java.util.HashSet;
 import java.util.Set;
-import java.util.UUID;
 
 /** Performs activation/deactivation transactions for logical ships. */
 public final class ShipActivationService {
@@ -81,8 +81,21 @@ public final class ShipActivationService {
         if (runtime == null) return Result.failure("Не найдено состояние активного корабля.");
         World world = displayWorld(ship);
         if (world == null) return Result.failure("Мир корабля не найден.");
-        var current = runtime.position();
-        if (!destinationSafe(ship, world, current)) return Result.failure("Деактивация отменена: место занято или часть корабля выходит за пределы мира.");
+
+        // Real Minecraft blocks are axis-aligned. Continuous pitch/roll cannot be materialized
+        // as blocks, so deactivation uses the nearest 90-degree yaw and a level hull.
+        int quarterTurns = nearestQuarterTurn(ship, runtime);
+        org.bukkit.Location current = runtime.position();
+        org.bukkit.Location restoreOrigin = current.clone();
+        restoreOrigin.setX(Math.rint(current.getX()));
+        restoreOrigin.setY(Math.rint(current.getY()));
+        restoreOrigin.setZ(Math.rint(current.getZ()));
+        restoreOrigin.setYaw(normalizeYaw(ship.origin().getYaw() + quarterTurns * 90.0f));
+        restoreOrigin.setPitch(0.0f);
+
+        if (!destinationSafe(ship, world, restoreOrigin, quarterTurns)) {
+            return Result.failure("Деактивация отменена: место занято, чанки не загружены или часть корабля выходит за пределы мира.");
+        }
 
         ship.state(ShipState.DEACTIVATING);
         VirtualChestManager storage = registry.storageManager();
@@ -91,40 +104,95 @@ public final class ShipActivationService {
                 storage.flushShip(ship.id());
                 storage.closeShip(ship.id());
             }
-            // Keep the logical ship registered until every physical block has been restored.
-            if (storage != null) storage.restoreShip(ship, world, current);
-            else restoreBlocksOnly(ship, world, current);
+            restoreShip(ship, world, restoreOrigin, quarterTurns);
             displayManager.remove(ship.id());
+            ship.yaw(restoreOrigin.getYaw());
+            ship.pitch(0.0f);
             ship.state(ShipState.BUILT);
             registry.unregister(ship.id());
-            return new Result(true, "Корабль деактивирован и полностью восстановлен в текущей позиции.", ship);
+            return new Result(true, "Корабль деактивирован и восстановлен в ближайшей допустимой ориентации блоков.", ship);
         } catch (RuntimeException ex) {
             ship.state(ShipState.FAILED);
             return Result.failure("Восстановление остановлено для безопасности: " + ex.getMessage());
         }
     }
 
-    private boolean destinationSafe(ShipModel ship, World world, org.bukkit.Location origin) {
-        if (origin.getBlockY() < world.getMinHeight() || origin.getBlockY() + maxY(ship) + 1 > world.getMaxHeight()) return false;
+    private int nearestQuarterTurn(ShipModel ship, ShipRuntimeState runtime) {
+        float relative = normalizeYaw(runtime.position().getYaw() - ship.origin().getYaw());
+        return Math.floorMod(Math.round(relative / 90.0f), 4);
+    }
+
+    private float normalizeYaw(float yaw) {
+        float result = yaw % 360.0f;
+        if (result < 0) result += 360.0f;
+        return result;
+    }
+
+    private int rotationIndex(int quarterTurns) {
+        return Math.floorMod(quarterTurns, 4);
+    }
+
+    private int rotatedX(ShipBlock block, int quarterTurns) {
+        return switch (rotationIndex(quarterTurns)) {
+            case 1 -> -block.z();
+            case 2 -> -block.x();
+            case 3 -> block.z();
+            default -> block.x();
+        };
+    }
+
+    private int rotatedZ(ShipBlock block, int quarterTurns) {
+        return switch (rotationIndex(quarterTurns)) {
+            case 1 -> block.x();
+            case 2 -> -block.z();
+            case 3 -> -block.x();
+            default -> block.z();
+        };
+    }
+
+    private boolean destinationSafe(ShipModel ship, World world, org.bukkit.Location origin, int quarterTurns) {
+        int minY = ship.blocks().stream().mapToInt(ShipBlock::y).min().orElse(0);
+        int maxY = ship.blocks().stream().mapToInt(ShipBlock::y).max().orElse(0);
+        if (origin.getBlockY() + minY < world.getMinHeight() || origin.getBlockY() + maxY >= world.getMaxHeight()) return false;
+
+        Set<String> checked = new HashSet<>();
         for (ShipBlock block : ship.blocks()) {
-            int x = origin.getBlockX() + block.x(), y = origin.getBlockY() + block.y(), z = origin.getBlockZ() + block.z();
+            int x = origin.getBlockX() + rotatedX(block, quarterTurns);
+            int y = origin.getBlockY() + block.y();
+            int z = origin.getBlockZ() + rotatedZ(block, quarterTurns);
+            if (!checked.add(x + ":" + y + ":" + z)) continue;
             if (!world.getWorldBorder().isInside(new org.bukkit.Location(world, x + 0.5, y + 0.5, z + 0.5))) return false;
             if (!world.isChunkLoaded(x >> 4, z >> 4)) return false;
-            Block target = world.getBlockAt(x, y, z);
-            Material type = target.getType();
+            Material type = world.getBlockAt(x, y, z).getType();
             if (!type.isAir() && type != Material.WATER && type != Material.BUBBLE_COLUMN) return false;
         }
         return true;
     }
 
-    private int maxY(ShipModel ship) { return ship.blocks().stream().mapToInt(ShipBlock::y).max().orElse(0); }
+    private org.bukkit.block.data.BlockData rotatedBlockData(ShipBlock block, int quarterTurns) {
+        org.bukkit.block.data.BlockData data = block.blockData();
+        return switch (rotationIndex(quarterTurns)) {
+            case 1 -> data.clone().rotate(Rotation.CLOCKWISE_90);
+            case 2 -> data.clone().rotate(Rotation.FLIPPED);
+            case 3 -> data.clone().rotate(Rotation.COUNTER_CLOCKWISE_90);
+            default -> data.clone();
+        };
+    }
 
-    private void restoreBlocksOnly(ShipModel ship, World world, org.bukkit.Location origin) {
+    private void restoreShip(ShipModel ship, World world, org.bukkit.Location origin, int quarterTurns) {
         for (ShipBlock block : ship.blocks()) {
-            Block target = world.getBlockAt(origin.getBlockX() + block.x(), origin.getBlockY() + block.y(), origin.getBlockZ() + block.z());
-            target.setBlockData(block.blockData(), false);
-            if (block.state() != null && block.state().blockState() != null) block.state().blockState().copy(target.getLocation()).update(true, false);
+            Block target = world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
+                    origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
+            target.setBlockData(rotatedBlockData(block, quarterTurns), false);
         }
+        for (ShipBlock block : ship.blocks()) {
+            Block target = world.getBlockAt(origin.getBlockX() + rotatedX(block, quarterTurns),
+                    origin.getBlockY() + block.y(), origin.getBlockZ() + rotatedZ(block, quarterTurns));
+            if (block.state() != null && block.state().blockState() != null) {
+                block.state().blockState().copy(target.getLocation()).update(true, false);
+            }
+        }
+        if (registry.storageManager() != null) registry.storageManager().restoreInventoriesOnly(ship, world, origin, quarterTurns);
     }
 
     private World displayWorld(ShipModel ship) {
