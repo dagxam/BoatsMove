@@ -5,6 +5,7 @@ import org.bukkit.World;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /** Authoritative logical model of an active player-built ship. */
@@ -69,6 +70,25 @@ public final class ShipModel {
         if (amount <= 0) return;
         health = Math.min(maxHealth, health + amount);
         flooding(Math.min(flooding, 1.0 - health / maxHealth));
+    }
+
+    /** Removes exactly one logical block identified by its immutable local coordinates. */
+    public Optional<ShipBlock> removeBlock(int x, int y, int z) {
+        for (int i = 0; i < blocks.size(); i++) {
+            ShipBlock block = blocks.get(i);
+            if (block.x() == x && block.y() == y && block.z() == z) {
+                blocks.remove(i);
+                return Optional.of(block);
+            }
+        }
+        return Optional.empty();
+    }
+
+    public boolean containsBlock(int x, int y, int z) {
+        for (ShipBlock block : blocks) {
+            if (block.x() == x && block.y() == y && block.z() == z) return true;
+        }
+        return false;
     }
 
     public int blockCount() { return blocks.size(); }
