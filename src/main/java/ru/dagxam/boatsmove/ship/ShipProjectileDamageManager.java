@@ -21,6 +21,7 @@ public final class ShipProjectileDamageManager {
     private static final double MAX_PROJECTILE_SEGMENT = 4.0;
     private static final double HIT_EPSILON = 0.03;
     private static final double MAX_PENETRATION_DISTANCE = 4.5;
+    private static final double MAX_LINE_OFFSET = 0.48;
 
     private final ShipRegistry registry;
     private final ShipDamageManager damage;
@@ -55,9 +56,14 @@ public final class ShipProjectileDamageManager {
 
                 ProjectileSource shooter = ((Projectile) entity).getShooter();
                 org.bukkit.entity.Player source = shooter instanceof org.bukkit.entity.Player player ? player : null;
+                Vector direction = current.toVector().subtract(previous.toVector());
+                if (direction.lengthSquared() < 1.0E-8) direction = entity.getVelocity().clone();
+                if (direction.lengthSquared() < 1.0E-8) direction = impact.location().toVector().subtract(previous.toVector());
+                if (direction.lengthSquared() > 1.0E-8) direction.normalize();
+
                 boolean changed = type.explosive()
-                        ? applyExplosion(impact, type, source)
-                        : applyPenetration(impact, previous, current, type, source);
+                        ? applyExplosion(impact, type, direction, source)
+                        : applyPenetration(impact, previous, current, type, direction, source);
 
                 if (changed) {
                     previousPositions.remove(entity.getUniqueId());
@@ -67,59 +73,60 @@ public final class ShipProjectileDamageManager {
         }
     }
 
-    /** Direct projectiles can pass through a limited number of logical hull blocks. */
+    /** Applies the first impact and, for penetration-capable projectiles, only contiguous blocks along the ray. */
     private boolean applyPenetration(Impact impact, Location start, Location end, ProjectileType type,
-                                     org.bukkit.entity.Player source) {
+                                     Vector direction, org.bukkit.entity.Player source) {
         ShipModel ship = impact.ship();
         ShipRuntimeState runtime = registry.runtime(ship.id());
         Location origin = registry.position(ship);
-        Vector direction = end.toVector().subtract(start.toVector());
-        if (direction.lengthSquared() < 1.0E-8) {
-            direction = impact.location().toVector().subtract(start.toVector());
-        }
-        if (direction.lengthSquared() < 1.0E-8) return false;
-        direction.normalize();
+        Vector ray = direction.clone().normalize();
 
-        List<BlockHit> hits = new ArrayList<>();
-        double impactDistance = impact.t();
+        List<BlockHit> candidates = new ArrayList<>();
         for (ShipBlock block : ship.blocks()) {
+            if (sameBlock(block, impact.block())) continue;
             Vector center = new Vector(block.x() + 0.5, block.y() + 0.5, block.z() + 0.5);
-            double distance = origin.clone().add(forwardTransform(center, ship, runtime)).distance(impact.location());
-            if (distance > MAX_PENETRATION_DISTANCE) continue;
-
-            // Keep only blocks that lie close to the actual projectile line after the first hit.
             Location blockCenter = origin.clone().add(forwardTransform(center, ship, runtime));
-            Vector toBlock = blockCenter.toVector().subtract(impact.location().toVector());
-            double along = toBlock.dot(direction);
-            if (along < -HIT_EPSILON || along > MAX_PENETRATION_DISTANCE) continue;
-            double perpendicularSquared = toBlock.clone().subtract(direction.clone().multiply(along)).lengthSquared();
-            if (perpendicularSquared > 0.30 * 0.30) continue;
-
-            hits.add(new BlockHit(block, Math.max(0.0, along), blockCenter));
+            Vector fromImpact = blockCenter.toVector().subtract(impact.location().toVector());
+            double along = fromImpact.dot(ray);
+            if (along <= HIT_EPSILON || along > MAX_PENETRATION_DISTANCE) continue;
+            double perpendicularSquared = fromImpact.clone().subtract(ray.clone().multiply(along)).lengthSquared();
+            if (perpendicularSquared > MAX_LINE_OFFSET * MAX_LINE_OFFSET) continue;
+            candidates.add(new BlockHit(block, along, blockCenter));
         }
 
-        // The impact block must always be first, even when the line-center test misses its center.
-        hits.removeIf(hit -> hit.block().x() == impact.block().x()
-                && hit.block().y() == impact.block().y()
-                && hit.block().z() == impact.block().z());
-        hits.add(new BlockHit(impact.block(), 0.0, impact.location()));
-        hits.sort(Comparator.comparingDouble(BlockHit::distance));
+        candidates.sort(Comparator.comparingDouble(BlockHit::distance));
 
         boolean changed = false;
         int affected = 0;
-        for (BlockHit hit : hits) {
+        ShipBlock last = impact.block();
+        double lastDistance = 0.0;
+        for (BlockHit hit : candidates) {
             if (affected >= type.maxBlocks()) break;
+            if (!isContiguous(last, hit.block(), lastDistance, hit.distance())) break;
+
             double factor = affected == 0 ? 1.0 : Math.max(type.minimumFalloff(), Math.pow(type.penetrationFalloff(), affected));
             double hitDamage = Math.max(0.5, type.damage() * factor);
-            if (damage.damageBlock(ship, hit.block(), hit.location(), hitDamage, source)) {
-                changed = true;
-                affected++;
-            }
+            if (!damage.damageBlock(ship, hit.block(), hit.location(), hitDamage, ray, source)) continue;
+
+            changed = true;
+            affected++;
+            last = hit.block();
+            lastDistance = hit.distance();
         }
+
+        if (damage.damageBlock(ship, impact.block(), impact.location(), type.damage(), ray, source)) changed = true;
         return changed;
     }
 
-    private boolean applyExplosion(Impact impact, ProjectileType type, org.bukkit.entity.Player source) {
+    private boolean isContiguous(ShipBlock previous, ShipBlock next, double previousDistance, double nextDistance) {
+        int dx = Math.abs(previous.x() - next.x());
+        int dy = Math.abs(previous.y() - next.y());
+        int dz = Math.abs(previous.z() - next.z());
+        if (Math.max(dx, Math.max(dy, dz)) > 1) return false;
+        return nextDistance - previousDistance <= 1.9;
+    }
+
+    private boolean applyExplosion(Impact impact, ProjectileType type, Vector direction, org.bukkit.entity.Player source) {
         ShipModel ship = impact.ship();
         ShipRuntimeState runtime = registry.runtime(ship.id());
         Location center = impact.location();
@@ -127,7 +134,7 @@ public final class ShipProjectileDamageManager {
         List<BlockHit> hits = new ArrayList<>();
 
         if (type.radius() <= 0.0) {
-            return damage.damageBlock(ship, impact.block(), center, type.damage(), source);
+            return damage.damageBlock(ship, impact.block(), center, type.damage(), direction, source);
         }
 
         for (ShipBlock block : ship.blocks()) {
@@ -141,10 +148,11 @@ public final class ShipProjectileDamageManager {
         boolean changed = false;
         int affected = 0;
         for (BlockHit hit : hits) {
+            if (affected >= type.maxBlocks()) break;
             double factor = Math.max(type.minimumFalloff(), 1.0 - hit.distance() / type.radius());
-            if (damage.damageBlock(ship, hit.block(), hit.location(), Math.max(0.5, type.damage() * factor), source)) {
+            if (damage.damageBlock(ship, hit.block(), hit.location(), Math.max(0.5, type.damage() * factor), direction, source)) {
                 changed = true;
-                if (++affected >= type.maxBlocks()) break;
+                affected++;
             }
         }
         return changed;
@@ -206,6 +214,10 @@ public final class ShipProjectileDamageManager {
         }
         return minX != Integer.MAX_VALUE && segmentAabb(start, end,
                 minX - 1.0, maxX + 2.0, minY - 1.0, maxY + 2.0, minZ - 1.0, maxZ + 2.0) >= 0.0;
+    }
+
+    private boolean sameBlock(ShipBlock a, ShipBlock b) {
+        return a.x() == b.x() && a.y() == b.y() && a.z() == b.z();
     }
 
     private Vector inverseTransform(Vector vector, ShipModel ship) {
