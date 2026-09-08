@@ -21,7 +21,6 @@ public final class ShipDamageManager {
         this.displays = displays;
     }
 
-    /** Legacy whole-hull damage entry point. */
     public boolean damage(ShipModel ship, double amount, Player source) {
         if (ship == null || ship.state() != ShipState.ACTIVE) return false;
         double health = ship.damage(amount);
@@ -32,6 +31,11 @@ public final class ShipDamageManager {
 
     /** Destroys the exact block selected by the virtual ray trace. */
     public boolean damageBlock(ShipModel ship, ShipBlock target, Location dropLocation, Player source) {
+        return damageBlock(ship, target, dropLocation, damageFor(target == null ? null : target.blockData().getMaterial()), source);
+    }
+
+    /** Destroys a block with an explicit impact damage value (used by projectiles). */
+    public boolean damageBlock(ShipModel ship, ShipBlock target, Location dropLocation, double impactDamage, Player source) {
         if (ship == null || target == null || ship.state() != ShipState.ACTIVE) return false;
         if (!ship.containsBlock(target.x(), target.y(), target.z())) return false;
 
@@ -43,8 +47,7 @@ public final class ShipDamageManager {
         if (removed.isEmpty()) return false;
         displays.removeBlock(ship.id(), target.x(), target.y(), target.z());
 
-        double damage = damageFor(target.blockData().getMaterial());
-        double health = ship.damage(damage);
+        double health = ship.damage(Math.max(0.1, impactDamage));
         ship.flooding(Math.min(1.0, ship.flooding() + floodingFromHole(target)));
         sendStatus(source, ship, health);
 
