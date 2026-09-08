@@ -16,6 +16,7 @@ import ru.dagxam.boatsmove.ship.ShipFloodingManager;
 import ru.dagxam.boatsmove.ship.ShipMovementController;
 import ru.dagxam.boatsmove.ship.ShipPassengerManager;
 import ru.dagxam.boatsmove.ship.ShipPersistenceManager;
+import ru.dagxam.boatsmove.ship.ShipProjectileDamageManager;
 import ru.dagxam.boatsmove.ship.ShipProtectionListener;
 import ru.dagxam.boatsmove.ship.ShipRegistry;
 import ru.dagxam.boatsmove.ship.VirtualBlockInteraction;
@@ -34,8 +35,10 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private VirtualChestManager storage;
     private ShipFloodingManager floodingManager;
     private ShipFloodVisualManager floodVisualManager;
+    private ShipProjectileDamageManager projectileDamageManager;
     private int autosaveTask = -1;
     private int floodingTask = -1;
+    private int projectileTask = -1;
 
     @Override
     public void onEnable() {
@@ -54,12 +57,15 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         this.storage = new VirtualChestManager(shipRegistry);
         getServer().getPluginManager().registerEvents(storage, this);
         VirtualBlockInteraction interaction = new VirtualBlockInteraction(shipRegistry, storage);
-        interaction.damageManager(new ShipDamageManager(shipRegistry, activationService, displayManager));
+        ShipDamageManager damageManager = new ShipDamageManager(shipRegistry, activationService, displayManager);
+        interaction.damageManager(damageManager);
         getServer().getPluginManager().registerEvents(interaction, this);
         getServer().getPluginManager().registerEvents(new ShipProtectionListener(shipRegistry), this);
 
         this.floodingManager = new ShipFloodingManager(shipRegistry, displayManager);
         this.floodVisualManager = new ShipFloodVisualManager(this, shipRegistry, floodingManager);
+        this.projectileDamageManager = new ShipProjectileDamageManager(shipRegistry, damageManager);
+
         int loaded = persistence.loadAll();
         for (var ship : shipRegistry.all()) {
             try { displayManager.spawn(ship); }
@@ -67,6 +73,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         }
         startAutosave();
         startFloodingSimulation();
+        startProjectileSimulation();
         movementController.start();
         if (getCommand("boatsmove") != null) getCommand("boatsmove").setExecutor(this);
         getLogger().info("BoatsMove enabled. Restored active ships: " + loaded);
@@ -77,6 +84,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     public void onDisable() {
         if (autosaveTask != -1) getServer().getScheduler().cancelTask(autosaveTask);
         if (floodingTask != -1) getServer().getScheduler().cancelTask(floodingTask);
+        if (projectileTask != -1) getServer().getScheduler().cancelTask(projectileTask);
         if (storage != null) storage.flushAll();
         if (persistence != null) persistence.saveAll();
         if (movementController != null) movementController.stop();
@@ -91,6 +99,12 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         floodingTask = getServer().getScheduler().runTaskTimer(this, () -> {
             if (floodingManager != null) floodingManager.tick();
             if (floodVisualManager != null) floodVisualManager.tick();
+        }, 1L, 1L).getTaskId();
+    }
+
+    private void startProjectileSimulation() {
+        projectileTask = getServer().getScheduler().runTaskTimer(this, () -> {
+            if (projectileDamageManager != null) projectileDamageManager.tick();
         }, 1L, 1L).getTaskId();
     }
 
