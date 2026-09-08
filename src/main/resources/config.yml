@@ -1,6 +1,5 @@
 # BoatsMove
-# Core configuration. Ship activation and full-structure rendering are implemented;
-# movement and passenger control are the next layer.
+# Core configuration for player-built virtual ships.
 
 ships:
   activation-block: OAK_BUTTON
@@ -32,6 +31,21 @@ movement:
   drag: 0.90
   vertical-snap: true
   interpolation-ticks: 2
+  water-only: true
+
+cannons:
+  material: DISPENSER
+  projectile-speed: 2.8
+  cooldown-millis: 900
+  damage: 18.0
+  explosion-radius: 1.25
+  max-affected-blocks: 4
+  ammo:
+    - IRON_NUGGET
+    - IRON_INGOT
+    - FIRE_CHARGE
+    - TNT
+    - COBBLESTONE
 
 storage:
   save-on-activation: true
