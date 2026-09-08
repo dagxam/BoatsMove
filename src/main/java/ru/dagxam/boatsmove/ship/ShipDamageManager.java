@@ -6,6 +6,7 @@ import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.entity.Player;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.util.Vector;
 
 import java.util.Optional;
 
@@ -36,6 +37,11 @@ public final class ShipDamageManager {
 
     /** Destroys a block with an explicit impact damage value (used by projectiles). */
     public boolean damageBlock(ShipModel ship, ShipBlock target, Location dropLocation, double impactDamage, Player source) {
+        return damageBlock(ship, target, dropLocation, impactDamage, null, source);
+    }
+
+    /** Destroys a block and derives the leak from the actual impact point when available. */
+    public boolean damageBlock(ShipModel ship, ShipBlock target, Location dropLocation, double impactDamage, Vector impactDirection, Player source) {
         if (ship == null || target == null || ship.state() != ShipState.ACTIVE) return false;
         if (!ship.containsBlock(target.x(), target.y(), target.z())) return false;
 
@@ -48,7 +54,8 @@ public final class ShipDamageManager {
         displays.removeBlock(ship.id(), target.x(), target.y(), target.z());
 
         double health = ship.damage(Math.max(0.1, impactDamage));
-        ship.flooding(Math.min(1.0, ship.flooding() + floodingFromHole(target)));
+        double holeFlood = floodingFromHole(ship, target, impactDirection);
+        ship.flooding(Math.min(1.0, ship.flooding() + holeFlood));
         sendStatus(source, ship, health);
 
         if (ship.blockCount() == 0 || health <= 0.0) activation.deactivate(ship);
@@ -77,11 +84,34 @@ public final class ShipDamageManager {
         return 4.0;
     }
 
-    private double floodingFromHole(ShipBlock block) {
+    private double floodingFromHole(ShipModel ship, ShipBlock block, Vector impactDirection) {
         int y = block.y();
-        if (y <= 0) return 0.10;
-        if (y == 1) return 0.07;
-        return 0.04;
+        int minY = Integer.MAX_VALUE;
+        int maxY = Integer.MIN_VALUE;
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (ShipBlock part : ship.blocks()) {
+            minY = Math.min(minY, part.y());
+            maxY = Math.max(maxY, part.y());
+            minX = Math.min(minX, part.x());
+            maxX = Math.max(maxX, part.x());
+            minZ = Math.min(minZ, part.z());
+            maxZ = Math.max(maxZ, part.z());
+        }
+
+        double base = y <= minY ? 0.12 : y <= minY + 1 ? 0.08 : 0.035;
+        double verticalExposure = maxY > minY ? 1.0 - (double) (y - minY) / (maxY - minY) : 1.0;
+        double edgeBonus = (block.x() == minX || block.x() == maxX || block.z() == minZ || block.z() == maxZ) ? 0.035 : 0.0;
+
+        if (impactDirection != null && impactDirection.lengthSquared() > 1.0E-9) {
+            Vector direction = impactDirection.clone().normalize();
+            double horizontal = Math.sqrt(direction.getX() * direction.getX() + direction.getZ() * direction.getZ());
+            if (horizontal > 0.15) edgeBonus += Math.min(0.04, horizontal * 0.04);
+            if (direction.getY() > 0.55) base *= 0.55;
+        }
+        return Math.max(0.01, Math.min(0.22, base * (0.70 + 0.30 * verticalExposure) + edgeBonus));
     }
 
     private void sendStatus(Player source, ShipModel ship, double health) {
