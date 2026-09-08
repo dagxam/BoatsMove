@@ -21,6 +21,7 @@ public final class VirtualBlockInteraction implements Listener {
     private final ShipRegistry registry;
     private final VirtualChestManager chests;
     private ShipDamageManager damageManager;
+    private ShipCannonManager cannonManager;
 
     public VirtualBlockInteraction(ShipRegistry registry, VirtualChestManager chests) {
         this.registry = registry;
@@ -28,6 +29,7 @@ public final class VirtualBlockInteraction implements Listener {
     }
 
     public void damageManager(ShipDamageManager damageManager) { this.damageManager = damageManager; }
+    public void cannonManager(ShipCannonManager cannonManager) { this.cannonManager = cannonManager; }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent event) {
@@ -41,7 +43,10 @@ public final class VirtualBlockInteraction implements Listener {
         if (hit == null) return;
         event.setCancelled(true);
 
-        if ((action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK) && chests.open(player, hit)) return;
+        if ((action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK)) {
+            if (cannonManager != null && cannonManager.handle(player, hit)) return;
+            if (chests.open(player, hit)) return;
+        }
 
         if ((action == Action.LEFT_CLICK_AIR || action == Action.LEFT_CLICK_BLOCK) && damageManager != null) {
             damageManager.damageBlock(hit.ship(), hit.block(), hit.hitCenter().toLocation(player.getWorld()), player);
