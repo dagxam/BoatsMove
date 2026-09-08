@@ -9,6 +9,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import ru.dagxam.boatsmove.ship.ShipActivationListener;
 import ru.dagxam.boatsmove.ship.ShipActivationService;
+import ru.dagxam.boatsmove.ship.ShipCannonManager;
 import ru.dagxam.boatsmove.ship.ShipDamageManager;
 import ru.dagxam.boatsmove.ship.ShipDisplayManager;
 import ru.dagxam.boatsmove.ship.ShipFloodVisualManager;
@@ -36,6 +37,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private ShipFloodingManager floodingManager;
     private ShipFloodVisualManager floodVisualManager;
     private ShipProjectileDamageManager projectileDamageManager;
+    private ShipCannonManager cannonManager;
     private int autosaveTask = -1;
     private int floodingTask = -1;
     private int projectileTask = -1;
@@ -59,12 +61,14 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         VirtualBlockInteraction interaction = new VirtualBlockInteraction(shipRegistry, storage);
         ShipDamageManager damageManager = new ShipDamageManager(shipRegistry, activationService, displayManager);
         interaction.damageManager(damageManager);
+        this.cannonManager = new ShipCannonManager(this, shipRegistry);
+        interaction.cannonManager(cannonManager);
         getServer().getPluginManager().registerEvents(interaction, this);
         getServer().getPluginManager().registerEvents(new ShipProtectionListener(shipRegistry), this);
 
         this.floodingManager = new ShipFloodingManager(shipRegistry, displayManager);
         this.floodVisualManager = new ShipFloodVisualManager(this, shipRegistry, floodingManager);
-        this.projectileDamageManager = new ShipProjectileDamageManager(shipRegistry, damageManager);
+        this.projectileDamageManager = new ShipProjectileDamageManager(shipRegistry, damageManager, cannonManager);
 
         int loaded = persistence.loadAll();
         for (var ship : shipRegistry.all()) {
