@@ -4,17 +4,19 @@ import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
-import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
 import org.bukkit.projectiles.ProjectileSource;
 import org.bukkit.util.Vector;
 
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Detects projectile impacts against virtual ship hulls. BlockDisplays have no hitbox, so impacts are resolved here. */
+/** Detects projectile impacts against virtual ship hulls and applies projectile-specific damage. */
 public final class ShipProjectileDamageManager {
     private static final double MAX_PROJECTILE_SEGMENT = 4.0;
     private static final double HIT_EPSILON = 0.03;
@@ -40,13 +42,16 @@ public final class ShipProjectileDamageManager {
                     previous = previousFromVelocity(current, entity.getVelocity());
                 }
 
+                ProjectileType type = projectileType(entity);
                 Impact impact = findImpact(previous, current, world);
                 if (impact == null) continue;
 
                 ProjectileSource shooter = ((Projectile) entity).getShooter();
-                Player source = shooter instanceof Player player ? player : null;
-                double impactDamage = damageForProjectile(entity);
-                if (damage.damageBlock(impact.ship(), impact.block(), impact.location(), impactDamage, source)) {
+                org.bukkit.entity.Player source = shooter instanceof org.bukkit.entity.Player player ? player : null;
+                boolean changed = type.explosive()
+                        ? applyExplosion(impact, type, source)
+                        : damage.damageBlock(impact.ship(), impact.block(), impact.location(), type.damage(), source);
+                if (changed) {
                     previousPositions.remove(entity.getUniqueId());
                     entity.remove();
                 }
@@ -54,16 +59,44 @@ public final class ShipProjectileDamageManager {
         }
     }
 
-    private double damageForProjectile(Entity entity) {
+    private boolean applyExplosion(Impact impact, ProjectileType type, org.bukkit.entity.Player source) {
+        ShipModel ship = impact.ship();
+        Location center = impact.location();
+        ShipRuntimeState runtime = registry.runtime(ship.id());
+        Location origin = registry.position(ship);
+        List<BlockHit> hits = new ArrayList<>();
+
+        for (ShipBlock block : ship.blocks()) {
+            Vector local = new Vector(block.x() + 0.5, block.y() + 0.5, block.z() + 0.5);
+            Location blockCenter = origin.clone().add(forwardTransform(local, ship, runtime));
+            double distance = blockCenter.distance(center);
+            if (distance <= type.radius()) hits.add(new BlockHit(block, distance));
+        }
+
+        hits.sort(Comparator.comparingDouble(BlockHit::distance));
+        boolean changed = false;
+        int affected = 0;
+        for (BlockHit hit : hits) {
+            double factor = Math.max(0.15, 1.0 - hit.distance() / type.radius());
+            double blockDamage = Math.max(0.5, type.damage() * factor);
+            if (damage.damageBlock(ship, hit.block(), center, blockDamage, source)) {
+                changed = true;
+                if (++affected >= type.maxBlocks()) break;
+            }
+        }
+        return changed;
+    }
+
+    private ProjectileType projectileType(Entity entity) {
         return switch (entity.getType().name()) {
-            case "TRIDENT" -> 10.0;
-            case "FIREBALL", "DRAGON_FIREBALL" -> 14.0;
-            case "WITHER_SKULL" -> 12.0;
-            case "SMALL_FIREBALL" -> 8.0;
-            case "WIND_CHARGE", "BREEZE_WIND_CHARGE" -> 6.0;
-            case "SPECTRAL_ARROW" -> 5.0;
-            case "ARROW" -> 4.0;
-            default -> 5.0;
+            case "FIREBALL", "DRAGON_FIREBALL" -> new ProjectileType(14.0, 2.5, 8, true);
+            case "WITHER_SKULL" -> new ProjectileType(12.0, 2.0, 6, true);
+            case "SMALL_FIREBALL" -> new ProjectileType(8.0, 1.5, 4, true);
+            case "WIND_CHARGE", "BREEZE_WIND_CHARGE" -> new ProjectileType(6.0, 1.25, 3, true);
+            case "TRIDENT" -> new ProjectileType(10.0, 0.0, 1, false);
+            case "SPECTRAL_ARROW" -> new ProjectileType(5.0, 0.0, 1, false);
+            case "ARROW" -> new ProjectileType(4.0, 0.0, 1, false);
+            default -> new ProjectileType(5.0, 0.0, 1, false);
         };
     }
 
@@ -77,7 +110,6 @@ public final class ShipProjectileDamageManager {
             if (ship.state() != ShipState.ACTIVE || !ship.worldId().equals(world.getUID())) continue;
             Location origin = registry.position(ship);
             if (origin.getWorld() == null || !origin.getWorld().equals(world)) continue;
-
             Vector startLocal = inverseTransform(start.toVector().subtract(origin.toVector()), ship);
             Vector endLocal = inverseTransform(end.toVector().subtract(origin.toVector()), ship);
             if (!broadPhase(startLocal, endLocal, ship)) continue;
@@ -89,9 +121,7 @@ public final class ShipProjectileDamageManager {
                         center.getY() - 0.5 - HIT_EPSILON, center.getY() + 0.5 + HIT_EPSILON,
                         center.getZ() - 0.5 - HIT_EPSILON, center.getZ() + 0.5 + HIT_EPSILON);
                 if (t < 0.0) continue;
-                if (best == null || t < best.t()) {
-                    best = new Impact(ship, block, lerp(start, end, t), t);
-                }
+                if (best == null || t < best.t()) best = new Impact(ship, block, lerp(start, end, t), t);
             }
         }
         return best;
@@ -106,22 +136,27 @@ public final class ShipProjectileDamageManager {
             minZ = Math.min(minZ, block.z()); maxZ = Math.max(maxZ, block.z());
         }
         if (minX == Integer.MAX_VALUE) return false;
-        return segmentAabb(start, end,
-                minX - 1.0, maxX + 2.0,
-                minY - 1.0, maxY + 2.0,
-                minZ - 1.0, maxZ + 2.0) >= 0.0;
+        return segmentAabb(start, end, minX - 1.0, maxX + 2.0, minY - 1.0, maxY + 2.0, minZ - 1.0, maxZ + 2.0) >= 0.0;
     }
 
     private Vector inverseTransform(Vector vector, ShipModel ship) {
         ShipRuntimeState runtime = registry.runtime(ship.id());
-        float currentYaw = runtime == null ? ship.yaw() : registry.position(ship).getYaw();
+        float currentYaw = registry.position(ship).getYaw();
         float currentPitch = runtime == null ? ship.pitch() : runtime.pitch();
         float currentRoll = runtime == null ? 0.0f : runtime.roll();
-
         double relativeYaw = Math.toRadians(currentYaw - ship.origin().getYaw());
         Vector v = rotateY(vector, -relativeYaw);
         v = rotateX(v, -Math.toRadians(currentPitch));
         return rotateZ(v, -Math.toRadians(currentRoll));
+    }
+
+    private Vector forwardTransform(Vector local, ShipModel ship, ShipRuntimeState runtime) {
+        float yaw = registry.position(ship).getYaw();
+        float pitch = runtime == null ? ship.pitch() : runtime.pitch();
+        float roll = runtime == null ? 0.0f : runtime.roll();
+        Vector v = rotateZ(local, Math.toRadians(roll));
+        v = rotateX(v, Math.toRadians(pitch));
+        return rotateY(v, Math.toRadians(yaw - ship.origin().getYaw()));
     }
 
     private Vector rotateY(Vector v, double angle) {
@@ -167,10 +202,10 @@ public final class ShipProjectileDamageManager {
 
     private void cleanupMissingProjectiles() {
         Iterator<Map.Entry<UUID, Location>> it = previousPositions.entrySet().iterator();
-        while (it.hasNext()) {
-            if (Bukkit.getEntity(it.next().getKey()) == null) it.remove();
-        }
+        while (it.hasNext()) if (Bukkit.getEntity(it.next().getKey()) == null) it.remove();
     }
 
     private record Impact(ShipModel ship, ShipBlock block, Location location, double t) {}
+    private record BlockHit(ShipBlock block, double distance) {}
+    private record ProjectileType(double damage, double radius, int maxBlocks, boolean explosive) {}
 }
