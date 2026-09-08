@@ -4,6 +4,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.Particle;
 import org.bukkit.World;
+import org.bukkit.block.data.Waterlogged;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.entity.Display;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -23,6 +24,8 @@ public final class ShipFloodVisualManager {
     private static final int MAX_WATER_DISPLAYS = 160;
     private static final int MAX_PER_COMPARTMENT = 32;
     private static final int LEAK_PARTICLE_INTERVAL = 3;
+    private static final int MAX_LEAKS_PER_TICK = 12;
+    private static final double LEAK_STREAM_LENGTH = 0.85;
 
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
@@ -131,25 +134,87 @@ public final class ShipFloodVisualManager {
 
     private void emitLeaks(World world, Location base, ShipModel ship,
                            List<ShipFloodingManager.CompartmentWater> compartments) {
+        int emitted = 0;
         for (ShipFloodingManager.CompartmentWater compartment : compartments) {
-            if (compartment.leaks().isEmpty() || compartment.level() < .02) continue;
+            if (emitted >= MAX_LEAKS_PER_TICK || compartment.leaks().isEmpty() || compartment.level() < .02) continue;
 
             int amount = Math.min(4, compartment.leaks().size());
-            for (int i = 0; i < amount; i++) {
+            for (int i = 0; i < amount && emitted < MAX_LEAKS_PER_TICK; i++, emitted++) {
                 ShipFloodingManager.LeakPoint point =
                         compartment.leaks().get((int) ((tick / LEAK_PARTICLE_INTERVAL + i)
                                 % compartment.leaks().size()));
+
                 Location leak = transform(base, ship,
                         point.x() + .5, point.y() + .5, point.z() + .5);
 
-                world.spawnParticle(Particle.BUBBLE, leak, 3,
-                        .16, .16, .16, .02);
-                if (compartment.level() > .45) {
+                double[] normal = leakNormal(compartment, point);
+                double[] worldNormal = transformVector(ship, normal[0], normal[1], normal[2]);
+
+                // If water is present outside the breach, pressure drives water inward.
+                // Otherwise the already flooded compartment visibly drains outward.
+                boolean outsideWater = isWaterAt(world, leak);
+                double direction = outsideWater ? 1.0 : -1.0;
+
+                for (int step = 0; step < 4; step++) {
+                    double distance = .08 + step * (LEAK_STREAM_LENGTH / 4.0);
+                    Location stream = leak.clone().add(
+                            worldNormal[0] * direction * distance,
+                            worldNormal[1] * direction * distance,
+                            worldNormal[2] * direction * distance);
+                    world.spawnParticle(Particle.BUBBLE, stream, 2,
+                            .045, .045, .045, .01);
+                }
+
+                if (outsideWater || compartment.level() > .45) {
                     world.spawnParticle(Particle.SPLASH, leak, 2,
-                            .16, .08, .16, .025);
+                            .10, .06, .10, .02);
                 }
             }
         }
+    }
+
+    private boolean isWaterAt(World world, Location location) {
+        var block = world.getBlockAt(location.getBlockX(), location.getBlockY(), location.getBlockZ());
+        if (block.getType() == Material.WATER) return true;
+        return block.getBlockData() instanceof Waterlogged waterlogged && waterlogged.isWaterlogged();
+    }
+
+    /** Returns an approximate outward normal for the nearest compartment wall. */
+    private double[] leakNormal(ShipFloodingManager.CompartmentWater compartment,
+                                ShipFloodingManager.LeakPoint point) {
+        double dxMin = Math.abs(point.x() - compartment.minX());
+        double dxMax = Math.abs(point.x() - compartment.maxX());
+        double dzMin = Math.abs(point.z() - compartment.minZ());
+        double dzMax = Math.abs(point.z() - compartment.maxZ());
+
+        double best = dxMin;
+        double nx = -1, nz = 0;
+        if (dxMax < best) { best = dxMax; nx = 1; nz = 0; }
+        if (dzMin < best) { best = dzMin; nx = 0; nz = -1; }
+        if (dzMax < best) { nx = 0; nz = 1; }
+        return new double[]{nx, 0, nz};
+    }
+
+    /** Rotates a local direction with the same yaw/pitch/roll convention as display transforms. */
+    private double[] transformVector(ShipModel ship, double x, double y, double z) {
+        ShipRuntimeState runtime = registry.runtime(ship.id());
+        float runtimePitch = runtime == null ? 0f : runtime.pitch();
+        float runtimeRoll = runtime == null ? 0f : runtime.roll();
+
+        double yaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
+        double sin = Math.sin(yaw);
+        double cos = Math.cos(yaw);
+        double yawX = x * cos - z * sin;
+        double yawZ = x * sin + z * cos;
+
+        double pitch = Math.toRadians(runtimePitch);
+        double pitchY = y * Math.cos(pitch) - yawZ * Math.sin(pitch);
+        double pitchZ = y * Math.sin(pitch) + yawZ * Math.cos(pitch);
+
+        double roll = Math.toRadians(runtimeRoll);
+        double rollX = yawX * Math.cos(roll) - pitchY * Math.sin(roll);
+        double rollY = yawX * Math.sin(roll) + pitchY * Math.cos(roll);
+        return new double[]{rollX, rollY, pitchZ};
     }
 
     /** Applies the same rigid-body yaw/pitch/roll convention as the ship display renderer. */
