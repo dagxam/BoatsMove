@@ -1,11 +1,13 @@
 package ru.dagxam.boatsmove.ship;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
 import org.bukkit.entity.Projectile;
+import org.bukkit.projectiles.ProjectileSource;
 import org.bukkit.util.Vector;
-import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.HashMap;
 import java.util.Iterator;
@@ -27,7 +29,7 @@ public final class ShipProjectileDamageManager {
 
     public void tick() {
         cleanupMissingProjectiles();
-        for (World world : org.bukkit.Bukkit.getWorlds()) {
+        for (World world : Bukkit.getWorlds()) {
             for (Entity entity : world.getEntitiesByClass(Projectile.class)) {
                 if (!entity.isValid() || entity.isDead()) continue;
                 Location current = entity.getLocation();
@@ -40,12 +42,29 @@ public final class ShipProjectileDamageManager {
 
                 Impact impact = findImpact(previous, current, world);
                 if (impact == null) continue;
-                if (damage.damageBlock(impact.ship(), impact.block(), impact.location(), null)) {
+
+                ProjectileSource shooter = ((Projectile) entity).getShooter();
+                Player source = shooter instanceof Player player ? player : null;
+                double impactDamage = damageForProjectile(entity);
+                if (damage.damageBlock(impact.ship(), impact.block(), impact.location(), impactDamage, source)) {
                     previousPositions.remove(entity.getUniqueId());
                     entity.remove();
                 }
             }
         }
+    }
+
+    private double damageForProjectile(Entity entity) {
+        return switch (entity.getType().name()) {
+            case "TRIDENT" -> 10.0;
+            case "FIREBALL", "DRAGON_FIREBALL" -> 14.0;
+            case "WITHER_SKULL" -> 12.0;
+            case "SMALL_FIREBALL" -> 8.0;
+            case "WIND_CHARGE", "BREEZE_WIND_CHARGE" -> 6.0;
+            case "SPECTRAL_ARROW" -> 5.0;
+            case "ARROW" -> 4.0;
+            default -> 5.0;
+        };
     }
 
     private Location previousFromVelocity(Location current, Vector velocity) {
@@ -57,7 +76,7 @@ public final class ShipProjectileDamageManager {
         for (ShipModel ship : registry.all()) {
             if (ship.state() != ShipState.ACTIVE || !ship.worldId().equals(world.getUID())) continue;
             Location origin = registry.position(ship);
-            if (!origin.getWorld().equals(world)) continue;
+            if (origin.getWorld() == null || !origin.getWorld().equals(world)) continue;
 
             Vector startLocal = inverseTransform(start.toVector().subtract(origin.toVector()), ship);
             Vector endLocal = inverseTransform(end.toVector().subtract(origin.toVector()), ship);
@@ -71,8 +90,7 @@ public final class ShipProjectileDamageManager {
                         center.getZ() - 0.5 - HIT_EPSILON, center.getZ() + 0.5 + HIT_EPSILON);
                 if (t < 0.0) continue;
                 if (best == null || t < best.t()) {
-                    Location hit = lerp(start, end, t);
-                    best = new Impact(ship, block, hit, t);
+                    best = new Impact(ship, block, lerp(start, end, t), t);
                 }
             }
         }
@@ -88,23 +106,22 @@ public final class ShipProjectileDamageManager {
             minZ = Math.min(minZ, block.z()); maxZ = Math.max(maxZ, block.z());
         }
         if (minX == Integer.MAX_VALUE) return false;
-        double margin = 1.0;
-        double hullMinX = minX - margin, hullMaxX = maxX + 1.0 + margin;
-        double hullMinY = minY - margin, hullMaxY = maxY + 1.0 + margin;
-        double hullMinZ = minZ - margin, hullMaxZ = maxZ + 1.0 + margin;
-        return segmentAabb(start, end, hullMinX, hullMaxX, hullMinY, hullMaxY, hullMinZ, hullMaxZ) >= 0.0;
+        return segmentAabb(start, end,
+                minX - 1.0, maxX + 2.0,
+                minY - 1.0, maxY + 2.0,
+                minZ - 1.0, maxZ + 2.0) >= 0.0;
     }
 
     private Vector inverseTransform(Vector vector, ShipModel ship) {
-        double relativeYaw = Math.toRadians(registry.position(ship).getYaw() - ship.origin().getYaw());
-        Vector v = rotateY(vector, -relativeYaw);
-        v = rotateX(v, -Math.toRadians(ship.pitch()));
-        return rotateZ(v, -Math.toRadians(shipRuntimeRoll(ship)));
-    }
+        ShipRuntimeState runtime = registry.runtime(ship.id());
+        float currentYaw = runtime == null ? ship.yaw() : registry.position(ship).getYaw();
+        float currentPitch = runtime == null ? ship.pitch() : runtime.pitch();
+        float currentRoll = runtime == null ? 0.0f : runtime.roll();
 
-    private float shipRuntimeRoll(ShipModel ship) {
-        ShipRuntimeState state = registry.runtime(ship.id());
-        return state == null ? 0.0f : state.roll();
+        double relativeYaw = Math.toRadians(currentYaw - ship.origin().getYaw());
+        Vector v = rotateY(vector, -relativeYaw);
+        v = rotateX(v, -Math.toRadians(currentPitch));
+        return rotateZ(v, -Math.toRadians(currentRoll));
     }
 
     private Vector rotateY(Vector v, double angle) {
@@ -151,8 +168,7 @@ public final class ShipProjectileDamageManager {
     private void cleanupMissingProjectiles() {
         Iterator<Map.Entry<UUID, Location>> it = previousPositions.entrySet().iterator();
         while (it.hasNext()) {
-            Map.Entry<UUID, Location> entry = it.next();
-            if (org.bukkit.Bukkit.getEntity(entry.getKey()) == null) it.remove();
+            if (Bukkit.getEntity(it.next().getKey()) == null) it.remove();
         }
     }
 
