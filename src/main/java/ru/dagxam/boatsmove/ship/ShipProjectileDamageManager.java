@@ -22,11 +22,13 @@ public final class ShipProjectileDamageManager {
     private static final double HIT_EPSILON = 0.03;
     private final ShipRegistry registry;
     private final ShipDamageManager damage;
+    private final ShipCannonManager cannons;
     private final Map<UUID, Location> previousPositions = new HashMap<>();
 
-    public ShipProjectileDamageManager(ShipRegistry registry, ShipDamageManager damage) {
+    public ShipProjectileDamageManager(ShipRegistry registry, ShipDamageManager damage, ShipCannonManager cannons) {
         this.registry = registry;
         this.damage = damage;
+        this.cannons = cannons;
     }
 
     public void tick() {
@@ -38,11 +40,10 @@ public final class ShipProjectileDamageManager {
                 Location previous = previousPositions.put(entity.getUniqueId(), current.clone());
                 if (previous == null) previous = previousFromVelocity(current, entity.getVelocity());
                 if (previous.getWorld() == null || !previous.getWorld().equals(current.getWorld())) previous = current.clone();
-                if (previous.distanceSquared(current) > MAX_PROJECTILE_SEGMENT * MAX_PROJECTILE_SEGMENT) {
-                    previous = previousFromVelocity(current, entity.getVelocity());
-                }
+                if (previous.distanceSquared(current) > MAX_PROJECTILE_SEGMENT * MAX_PROJECTILE_SEGMENT) previous = previousFromVelocity(current, entity.getVelocity());
 
                 ProjectileType type = projectileType(entity);
+                if (type == null) continue;
                 Impact impact = findImpact(previous, current, world);
                 if (impact == null) continue;
 
@@ -65,14 +66,12 @@ public final class ShipProjectileDamageManager {
         ShipRuntimeState runtime = registry.runtime(ship.id());
         Location origin = registry.position(ship);
         List<BlockHit> hits = new ArrayList<>();
-
         for (ShipBlock block : ship.blocks()) {
             Vector local = new Vector(block.x() + 0.5, block.y() + 0.5, block.z() + 0.5);
             Location blockCenter = origin.clone().add(forwardTransform(local, ship, runtime));
             double distance = blockCenter.distance(center);
             if (distance <= type.radius()) hits.add(new BlockHit(block, distance));
         }
-
         hits.sort(Comparator.comparingDouble(BlockHit::distance));
         boolean changed = false;
         int affected = 0;
@@ -88,6 +87,7 @@ public final class ShipProjectileDamageManager {
     }
 
     private ProjectileType projectileType(Entity entity) {
+        if (cannons != null && cannons.isCannonball(entity)) return new ProjectileType(18.0, 1.25, 4, true);
         return switch (entity.getType().name()) {
             case "FIREBALL", "DRAGON_FIREBALL" -> new ProjectileType(14.0, 2.5, 8, true);
             case "WITHER_SKULL" -> new ProjectileType(12.0, 2.0, 6, true);
@@ -96,13 +96,11 @@ public final class ShipProjectileDamageManager {
             case "TRIDENT" -> new ProjectileType(10.0, 0.0, 1, false);
             case "SPECTRAL_ARROW" -> new ProjectileType(5.0, 0.0, 1, false);
             case "ARROW" -> new ProjectileType(4.0, 0.0, 1, false);
-            default -> new ProjectileType(5.0, 0.0, 1, false);
+            default -> null;
         };
     }
 
-    private Location previousFromVelocity(Location current, Vector velocity) {
-        return current.clone().subtract(velocity);
-    }
+    private Location previousFromVelocity(Location current, Vector velocity) { return current.clone().subtract(velocity); }
 
     private Impact findImpact(Location start, Location end, World world) {
         Impact best = null;
@@ -113,7 +111,6 @@ public final class ShipProjectileDamageManager {
             Vector startLocal = inverseTransform(start.toVector().subtract(origin.toVector()), ship);
             Vector endLocal = inverseTransform(end.toVector().subtract(origin.toVector()), ship);
             if (!broadPhase(startLocal, endLocal, ship)) continue;
-
             for (ShipBlock block : ship.blocks()) {
                 Vector center = new Vector(block.x() + 0.5, block.y() + 0.5, block.z() + 0.5);
                 double t = segmentAabb(startLocal, endLocal,
@@ -196,9 +193,7 @@ public final class ShipProjectileDamageManager {
         return tMin;
     }
 
-    private Location lerp(Location a, Location b, double t) {
-        return a.clone().add(b.toVector().subtract(a.toVector()).multiply(t));
-    }
+    private Location lerp(Location a, Location b, double t) { return a.clone().add(b.toVector().subtract(a.toVector()).multiply(t)); }
 
     private void cleanupMissingProjectiles() {
         Iterator<Map.Entry<UUID, Location>> it = previousPositions.entrySet().iterator();
