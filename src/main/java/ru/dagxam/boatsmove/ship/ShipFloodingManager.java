@@ -76,8 +76,6 @@ public final class ShipFloodingManager {
                 double insideSurface = compartment.bottomY() + cs.level * compartment.height();
                 double head = Math.max(0.0, leaks.surface() - insideSurface);
                 if (head > 0.0) {
-                    // Torricelli-like response: flow grows with pressure, while
-                    // aperture size is represented by the number of exposed cells.
                     double aperture = Math.min(1.0, leaks.count() / 8.0);
                     double pressure = Math.min(1.0, Math.sqrt(head / 3.0));
                     double flow = Math.min(0.035, FLOW_RATE * Math.max(0.15, aperture) * pressure);
@@ -91,8 +89,6 @@ public final class ShipFloodingManager {
             leftLeaks += leaks.left(); rightLeaks += leaks.right();
         }
 
-        // A destroyed bulkhead is retained as a virtual hydraulic connection.
-        // Transfer is performed in volume, not percentage, so conservation is exact.
         transferBetweenCompartments(cache, state);
 
         double weightedFlood = 0.0;
@@ -143,8 +139,6 @@ public final class ShipFloodingManager {
                 addLink(links, a.seed(), b.seed());
             }
         }
-        // Keep the old compartment geometry while the breached wall is a virtual
-        // connection. This is what lets the two water levels equalize gradually.
         return new TopologyCache(newCache.signature(), newCache.hull(), newCache.outside(), oldCache.compartments(), links);
     }
 
@@ -180,8 +174,6 @@ public final class ShipFloodingManager {
             CompartmentState ts = levelDelta > 0 ? bs : as;
             double sourceVolume = source.cells().size();
             double targetVolume = target.cells().size();
-
-            // Larger breach area increases capacity. Flow falls as the levels converge.
             double aperture = Math.min(4.0, Math.max(1.0, link.area()));
             double pressure = Math.sqrt(Math.abs(levelDelta));
             double capacity = BULKHEAD_FLOW_RATE * aperture * pressure;
@@ -200,9 +192,7 @@ public final class ShipFloodingManager {
     }
 
     private void migrateWater(TopologyCache oldCache, TopologyCache newCache, FloodState state) {
-        if (oldCache.compartments().isEmpty() || newCache.compartments().isEmpty()) {
-            state.compartments.clear(); return;
-        }
+        if (oldCache.compartments().isEmpty() || newCache.compartments().isEmpty()) { state.compartments.clear(); return; }
         Map<Pos, Double> oldWater = new HashMap<>();
         for (Compartment old : oldCache.compartments()) {
             CompartmentState os = state.compartments.get(old.seed());
@@ -220,8 +210,7 @@ public final class ShipFloodingManager {
         state.compartments.clear(); state.compartments.putAll(migrated);
     }
 
-    private LeakInfo findLeaks(World world, Location position, ShipModel ship, Set<Pos> hull,
-                               Set<Pos> outside, Compartment compartment) {
+    private LeakInfo findLeaks(World world, Location position, ShipModel ship, Set<Pos> hull, Set<Pos> outside, Compartment compartment) {
         int count = 0, front = 0, rear = 0, left = 0, right = 0, samples = 0;
         double surfaceSum = 0.0;
         List<Pos> points = new ArrayList<>();
@@ -270,6 +259,46 @@ public final class ShipFloodingManager {
             double severity = (ship.flooding() - SINK_THRESHOLD) / (1 - SINK_THRESHOLD);
             runtime.verticalSpeed(Math.min(runtime.verticalSpeed(), -Math.min(0.085, 0.012 + severity * 0.073)));
         } else if (runtime.verticalSpeed() < 0) runtime.verticalSpeed(runtime.verticalSpeed() * 0.90);
+    }
+
+    /** Returns the current flooded mass distribution in ship-local coordinates. */
+    public BuoyancyState buoyancyState(ShipModel ship) {
+        FloodState state = floodStates.get(ship.id());
+        TopologyCache cache = topology.get(ship.id());
+        if (state == null || cache == null || cache.compartments().isEmpty()) return BuoyancyState.EMPTY;
+
+        double totalWater = 0.0, xMoment = 0.0, zMoment = 0.0;
+        for (Compartment c : cache.compartments()) {
+            CompartmentState cs = state.compartments.get(c.seed());
+            if (cs == null || cs.level <= 0.0) continue;
+            double volume = cs.level * c.cells().size();
+            totalWater += volume;
+            xMoment += (c.minX() + c.maxX()) * 0.5 * volume;
+            zMoment += (c.minZ() + c.maxZ()) * 0.5 * volume;
+        }
+        if (totalWater <= 0.001) return BuoyancyState.EMPTY;
+
+        double minX = cache.compartments().stream().mapToInt(Compartment::minX).min().orElse(0);
+        double maxX = cache.compartments().stream().mapToInt(Compartment::maxX).max().orElse(0);
+        double minZ = cache.compartments().stream().mapToInt(Compartment::minZ).min().orElse(0);
+        double maxZ = cache.compartments().stream().mapToInt(Compartment::maxZ).max().orElse(0);
+        double halfX = Math.max(1.0, (maxX - minX) * 0.5);
+        double halfZ = Math.max(1.0, (maxZ - minZ) * 0.5);
+        double centerX = (minX + maxX) * 0.5;
+        double centerZ = (minZ + maxZ) * 0.5;
+        return new BuoyancyState(clamp01(totalWater / Math.max(1.0, hullVolume(cache))),
+                clamp((xMoment / totalWater - centerX) / halfX, -1.0, 1.0),
+                clamp((zMoment / totalWater - centerZ) / halfZ, -1.0, 1.0));
+    }
+
+    private int hullVolume(TopologyCache cache) {
+        int volume = 0;
+        for (Compartment c : cache.compartments()) volume += c.cells().size();
+        return Math.max(1, volume);
+    }
+
+    public record BuoyancyState(double floodedFraction, double lateralCenter, double longitudinalCenter) {
+        private static final BuoyancyState EMPTY = new BuoyancyState(0.0, 0.0, 0.0);
     }
 
     private TopologyCache buildTopology(ShipModel ship, long signature) {
@@ -381,7 +410,8 @@ public final class ShipFloodingManager {
     private static double clamp01(double v) { return Math.max(0, Math.min(1, v)); }
     private static double clamp(double v, double min, double max) { return Math.max(min, Math.min(max, v)); }
     private static float approach(float current, float target, float amount) {
-        return current < target ? Math.min(target, current + amount) : Math.max(target, current - amount);
+        if (current < target) return Math.min(target, current + amount);
+        return Math.max(target, current - amount);
     }
 
     private static final List<Pos> DIRECTIONS = List.of(new Pos(1,0,0), new Pos(-1,0,0), new Pos(0,1,0),
