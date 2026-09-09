@@ -81,6 +81,10 @@ public final class ShipProjectileDamageManager {
         Location origin = registry.position(ship);
         Vector ray = direction.clone().normalize();
 
+        // The first physical/logical block is always the primary impact.
+        boolean changed = damage.damageBlock(ship, impact.block(), impact.location(), type.damage(), ray, source);
+        if (!changed || type.maxBlocks() <= 1) return changed;
+
         List<BlockHit> candidates = new ArrayList<>();
         for (ShipBlock block : ship.blocks()) {
             if (sameBlock(block, impact.block())) continue;
@@ -96,26 +100,22 @@ public final class ShipProjectileDamageManager {
 
         candidates.sort(Comparator.comparingDouble(BlockHit::distance));
 
-        boolean changed = false;
-        int affected = 0;
+        int affected = 1;
         ShipBlock last = impact.block();
         double lastDistance = 0.0;
         for (BlockHit hit : candidates) {
             if (affected >= type.maxBlocks()) break;
             if (!isContiguous(last, hit.block(), lastDistance, hit.distance())) break;
 
-            double factor = affected == 0 ? 1.0 : Math.max(type.minimumFalloff(), Math.pow(type.penetrationFalloff(), affected));
+            double factor = Math.max(type.minimumFalloff(), Math.pow(type.penetrationFalloff(), affected));
             double hitDamage = Math.max(0.5, type.damage() * factor);
             if (!damage.damageBlock(ship, hit.block(), hit.location(), hitDamage, ray, source)) continue;
 
-            changed = true;
             affected++;
             last = hit.block();
             lastDistance = hit.distance();
         }
-
-        if (damage.damageBlock(ship, impact.block(), impact.location(), type.damage(), ray, source)) changed = true;
-        return changed;
+        return true;
     }
 
     private boolean isContiguous(ShipBlock previous, ShipBlock next, double previousDistance, double nextDistance) {
