@@ -133,29 +133,46 @@ public final class ShipMovementController {
         Location pos = runtime.position();
         int minY = ship.blocks().stream().mapToInt(ShipBlock::y).min().orElse(0);
         int maxY = ship.blocks().stream().mapToInt(ShipBlock::y).max().orElse(0);
+        int minX = ship.blocks().stream().mapToInt(ShipBlock::x).min().orElse(0);
+        int maxX = ship.blocks().stream().mapToInt(ShipBlock::x).max().orElse(0);
+        int minZ = ship.blocks().stream().mapToInt(ShipBlock::z).min().orElse(0);
+        int maxZ = ship.blocks().stream().mapToInt(ShipBlock::z).max().orElse(0);
+
         double bottom = pos.getY() + minY;
         double height = Math.max(1.0, maxY - minY + 1.0);
-        double immersion = clamp((water.averageSurface - bottom) / height, 0.0, 1.0);
+        double footprint = Math.max(1.0, (maxX - minX + 1.0) * (maxZ - minZ + 1.0));
 
         ShipFloodingManager.BuoyancyState flood = floodingManager == null
                 ? new ShipFloodingManager.BuoyancyState(ship.flooding(), 0.0, 0.0)
                 : floodingManager.buoyancyState(ship);
         double floodedMass = clamp(Math.max(ship.flooding(), flood.floodedFraction()), 0.0, 1.0);
 
-        double sizeFactor = clamp(Math.cbrt(ship.blockCount() / 16.0), 0.75, 1.75);
-        double desiredImmersion = clamp(0.34 + 0.10 * (sizeFactor - 0.75), 0.30, 0.50);
-        desiredImmersion += floodedMass * 0.30 / Math.max(0.75, ship.shipClass().buoyancyMultiplier());
+        // Approximate Archimedean draft: dry hull mass + actual flooded volume must
+        // be supported by displaced water. The class multiplier represents hull
+        // buoyancy/shape, while footprint is the effective water-plane area.
+        double dryMass = ship.blockCount() * 0.62;
+        double estimatedInternalVolume = Math.max(1.0, ship.blockCount() * 0.30);
+        double floodMass = estimatedInternalVolume * floodedMass * 0.95;
+        double effectiveBuoyancy = Math.max(0.55, ship.shipClass().buoyancyMultiplier());
+        double requiredDisplacement = (dryMass + floodMass) / (footprint * effectiveBuoyancy);
+        double desiredDraft = clamp(requiredDisplacement, 0.16, height * 0.82);
 
-        double sinkFraction = clamp((floodedMass - 0.72) / 0.28, 0.0, 1.0);
-        double sinkDepth = height * (0.55 * sinkFraction * sinkFraction);
-        double targetBottom = water.averageSurface - desiredImmersion * height - sinkDepth;
+        double immersion = clamp((water.averageSurface - bottom) / height, 0.0, 1.0);
+        double targetBottom = water.averageSurface - desiredDraft;
+
+        // Once the flooded volume approaches the available internal volume, buoyancy
+        // collapses progressively instead of abruptly teleporting the ship downward.
+        double critical = clamp((floodedMass - 0.72) / 0.28, 0.0, 1.0);
+        double sinkDepth = height * (0.50 * critical * critical);
+        targetBottom -= sinkDepth;
+
         double error = targetBottom - bottom;
-        double vertical = runtime.verticalSpeed() + error * buoyancyStrength * ship.shipClass().buoyancyMultiplier();
+        double vertical = runtime.verticalSpeed() + error * buoyancyStrength * effectiveBuoyancy;
         vertical *= verticalDamping;
         vertical = clamp(vertical, -maxVerticalStep, maxVerticalStep);
         if (Math.abs(error) < 0.02) vertical *= 0.45;
-        if (floodedMass > 0.72) {
-            double forcedSink = -0.012 - sinkFraction * 0.073;
+        if (critical > 0.0) {
+            double forcedSink = -0.010 - critical * 0.075;
             vertical = Math.min(vertical, forcedSink);
         }
         runtime.verticalSpeed(vertical);
@@ -176,6 +193,9 @@ public final class ShipMovementController {
         targetRoll = (float) clamp(targetRoll, -maxTilt, maxTilt);
         runtime.pitch(approach(runtime.pitch(), targetPitch, 0.18f));
         runtime.roll(approach(runtime.roll(), targetRoll, 0.18f));
+
+        // A very shallow water layer should not make the hull oscillate vertically.
+        if (immersion < 0.05 && floodedMass < 0.10) runtime.verticalSpeed(runtime.verticalSpeed() * 0.80);
     }
 
     private WaterState sampleWater(ShipModel ship, Location position) {
