@@ -56,6 +56,7 @@ public final class ShipDamageManager {
         double health = ship.damage(Math.max(0.1, impactDamage));
         double holeFlood = floodingFromHole(ship, target, impactDirection);
         ship.flooding(Math.min(1.0, ship.flooding() + holeFlood));
+        applyDirectionalBreachPressure(ship, target, impactDirection);
         sendStatus(source, ship, health);
 
         if (ship.blockCount() == 0 || health <= 0.0) activation.deactivate(ship);
@@ -82,6 +83,53 @@ public final class ShipDamageManager {
                 || material == Material.FURNACE || material == Material.SMOKER || material == Material.BLAST_FURNACE) return 6.0;
         if (!material.isSolid()) return 2.0;
         return 4.0;
+    }
+
+    private void applyDirectionalBreachPressure(ShipModel ship, ShipBlock block, Vector impactDirection) {
+        int minX = Integer.MAX_VALUE;
+        int maxX = Integer.MIN_VALUE;
+        int minZ = Integer.MAX_VALUE;
+        int maxZ = Integer.MIN_VALUE;
+        for (ShipBlock part : ship.blocks()) {
+            minX = Math.min(minX, part.x());
+            maxX = Math.max(maxX, part.x());
+            minZ = Math.min(minZ, part.z());
+            maxZ = Math.max(maxZ, part.z());
+        }
+
+        double front = block.z() == maxZ ? 0.0 : 0.0;
+        double rear = block.z() == minZ ? 0.0 : 0.0;
+        double left = block.x() == minX ? 0.0 : 0.0;
+        double right = block.x() == maxX ? 0.0 : 0.0;
+
+        // Local hull edge is the strongest signal; the projectile direction is a secondary signal.
+        if (block.z() == maxZ) front = 0.22;
+        if (block.z() == minZ) rear = 0.22;
+        if (block.x() == minX) left = 0.22;
+        if (block.x() == maxX) right = 0.22;
+
+        if (impactDirection != null && impactDirection.lengthSquared() > 1.0E-9) {
+            Vector direction = impactDirection.clone().normalize();
+            double horizontal = Math.sqrt(direction.getX() * direction.getX() + direction.getZ() * direction.getZ());
+            if (horizontal > 0.15) {
+                double sidePressure = Math.min(0.16, horizontal * 0.16);
+                if (Math.abs(direction.getZ()) >= Math.abs(direction.getX())) {
+                    if (direction.getZ() > 0.0) front = Math.max(front, sidePressure);
+                    else rear = Math.max(rear, sidePressure);
+                } else {
+                    if (direction.getX() < 0.0) left = Math.max(left, sidePressure);
+                    else right = Math.max(right, sidePressure);
+                }
+            }
+        }
+
+        if (front + rear + left + right <= 0.0) {
+            // Interior damage still creates a weak directional pressure that decays over time.
+            if (block.z() >= (minZ + maxZ) * 0.5) front = 0.07;
+            else rear = 0.07;
+        }
+
+        ship.addFloodSidePressure(front, rear, left, right);
     }
 
     private double floodingFromHole(ShipModel ship, ShipBlock block, Vector impactDirection) {
