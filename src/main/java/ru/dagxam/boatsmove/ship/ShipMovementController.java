@@ -86,11 +86,16 @@ public final class ShipMovementController {
 
             Input input = pilot.getCurrentInput();
             double speed = runtime.speed();
-            if (input.isLeft()) ship.yaw(ship.yaw() - (float) turnSpeed);
-            if (input.isRight()) ship.yaw(ship.yaw() + (float) turnSpeed);
+            ShipFloodingManager.BuoyancyState flood = floodingManager == null
+                    ? new ShipFloodingManager.BuoyancyState(ship.flooding(), 0.0, 0.0)
+                    : floodingManager.buoyancyState(ship);
+            double floodedMass = clamp(Math.max(ship.flooding(), flood.floodedFraction()), 0.0, 1.0);
+            double controlMultiplier = clamp(1.0 - floodedMass * 0.70, 0.30, 1.0);
+            if (input.isLeft()) ship.yaw(ship.yaw() - (float) (turnSpeed * controlMultiplier));
+            if (input.isRight()) ship.yaw(ship.yaw() + (float) (turnSpeed * controlMultiplier));
 
             double classSpeed = ship.shipClass().speedMultiplier();
-            double floodSpeed = Math.max(0.25, 1.0 - ship.flooding() * 0.65);
+            double floodSpeed = Math.max(0.18, 1.0 - floodedMass * 0.72);
             double terrainMultiplier = (water.shallow ? shallowSpeedMultiplier : 1.0) * classSpeed * floodSpeed;
             double forwardLimit = maxSpeed * terrainMultiplier;
             double reverseLimit = reverseSpeed * terrainMultiplier;
@@ -139,8 +144,6 @@ public final class ShipMovementController {
 
         double sizeFactor = clamp(Math.cbrt(ship.blockCount() / 16.0), 0.75, 1.75);
         double desiredImmersion = clamp(0.34 + 0.10 * (sizeFactor - 0.75), 0.30, 0.50);
-        // Flooded water behaves as added mass: as real compartment volume fills,
-        // the vessel must sit deeper to displace enough external water.
         desiredImmersion += floodedMass * 0.30 / Math.max(0.75, ship.shipClass().buoyancyMultiplier());
 
         double sinkFraction = clamp((floodedMass - 0.72) / 0.28, 0.0, 1.0);
@@ -167,8 +170,6 @@ public final class ShipMovementController {
 
         targetPitch += (float) ((ship.floodRear() - ship.floodFront()) * 5.0);
         targetRoll += (float) ((ship.floodRight() - ship.floodLeft()) * 5.0);
-        // Actual flooded mass center adds another trim component, so water in
-        // the forward/left compartment visibly changes the ship's attitude.
         targetRoll += (float) (flood.lateralCenter() * floodedMass * 4.0);
         targetPitch += (float) (-flood.longitudinalCenter() * floodedMass * 4.0);
         targetPitch = (float) clamp(targetPitch, -maxTilt, maxTilt);
