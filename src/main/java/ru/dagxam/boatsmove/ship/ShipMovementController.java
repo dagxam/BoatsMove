@@ -17,6 +17,7 @@ public final class ShipMovementController {
     private final ShipCollisionManager collision;
     private final double maxSpeed, acceleration, reverseSpeed, turnSpeed, drag;
     private final boolean waterOnly;
+    private ShipFloodingManager floodingManager;
     private final double buoyancyStrength = 0.12;
     private final double verticalDamping = 0.70;
     private final double maxVerticalStep = 0.10;
@@ -39,6 +40,8 @@ public final class ShipMovementController {
         this.drag = Math.max(0.0, Math.min(0.999, drag));
         this.waterOnly = waterOnly;
     }
+
+    public void floodingManager(ShipFloodingManager floodingManager) { this.floodingManager = floodingManager; }
 
     public void start() {
         if (taskId != -1) return;
@@ -129,13 +132,18 @@ public final class ShipMovementController {
         double height = Math.max(1.0, maxY - minY + 1.0);
         double immersion = clamp((water.averageSurface - bottom) / height, 0.0, 1.0);
 
+        ShipFloodingManager.BuoyancyState flood = floodingManager == null
+                ? new ShipFloodingManager.BuoyancyState(ship.flooding(), 0.0, 0.0)
+                : floodingManager.buoyancyState(ship);
+        double floodedMass = clamp(Math.max(ship.flooding(), flood.floodedFraction()), 0.0, 1.0);
+
         double sizeFactor = clamp(Math.cbrt(ship.blockCount() / 16.0), 0.75, 1.75);
         double desiredImmersion = clamp(0.34 + 0.10 * (sizeFactor - 0.75), 0.30, 0.50);
-        desiredImmersion += ship.flooding() * 0.18 / Math.max(0.75, ship.shipClass().buoyancyMultiplier());
+        // Flooded water behaves as added mass: as real compartment volume fills,
+        // the vessel must sit deeper to displace enough external water.
+        desiredImmersion += floodedMass * 0.30 / Math.max(0.75, ship.shipClass().buoyancyMultiplier());
 
-        // Flooding increases draft non-linearly. Above 72% flooding the vessel
-        // begins a real sinking motion instead of merely sitting lower in water.
-        double sinkFraction = clamp((ship.flooding() - 0.72) / 0.28, 0.0, 1.0);
+        double sinkFraction = clamp((floodedMass - 0.72) / 0.28, 0.0, 1.0);
         double sinkDepth = height * (0.55 * sinkFraction * sinkFraction);
         double targetBottom = water.averageSurface - desiredImmersion * height - sinkDepth;
         double error = targetBottom - bottom;
@@ -143,7 +151,7 @@ public final class ShipMovementController {
         vertical *= verticalDamping;
         vertical = clamp(vertical, -maxVerticalStep, maxVerticalStep);
         if (Math.abs(error) < 0.02) vertical *= 0.45;
-        if (ship.flooding() > 0.72) {
+        if (floodedMass > 0.72) {
             double forcedSink = -0.012 - sinkFraction * 0.073;
             vertical = Math.min(vertical, forcedSink);
         }
@@ -157,10 +165,12 @@ public final class ShipMovementController {
         float targetPitch = (float) clamp((front - rear) * -4.5, -maxTilt, maxTilt);
         float targetRoll = (float) clamp((right - left) * 4.5, -maxTilt, maxTilt);
 
-        // A breached side gets a persistent list toward that side. This is
-        // combined with wave trim rather than replacing it.
         targetPitch += (float) ((ship.floodRear() - ship.floodFront()) * 5.0);
         targetRoll += (float) ((ship.floodRight() - ship.floodLeft()) * 5.0);
+        // Actual flooded mass center adds another trim component, so water in
+        // the forward/left compartment visibly changes the ship's attitude.
+        targetRoll += (float) (flood.lateralCenter() * floodedMass * 4.0);
+        targetPitch += (float) (-flood.longitudinalCenter() * floodedMass * 4.0);
         targetPitch = (float) clamp(targetPitch, -maxTilt, maxTilt);
         targetRoll = (float) clamp(targetRoll, -maxTilt, maxTilt);
         runtime.pitch(approach(runtime.pitch(), targetPitch, 0.18f));
