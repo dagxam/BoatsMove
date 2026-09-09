@@ -24,6 +24,8 @@ public final class ShipFloodingManager {
     private static final double SINK_THRESHOLD = 0.72;
     private static final double MAX_WATER_LEVEL_STEP = 0.035;
     private static final double FLOOD_TRIM_STRENGTH = 8.0;
+    private static final double BULKHEAD_FLOW_RATE = 0.035;
+    private static final double MAX_BULKHEAD_TRANSFER = 0.025;
 
     private final ShipRegistry registry;
     private final Map<UUID, TopologyCache> topology = new HashMap<>();
@@ -35,9 +37,7 @@ public final class ShipFloodingManager {
 
     public void tick() {
         for (ShipModel ship : registry.all()) {
-            if (ship.state() == ShipState.ACTIVE && ship.blockCount() > 0) {
-                update(ship);
-            }
+            if (ship.state() == ShipState.ACTIVE && ship.blockCount() > 0) update(ship);
         }
     }
 
@@ -56,8 +56,13 @@ public final class ShipFloodingManager {
             state.reconcile(cache);
         } else if (cache.signature() != signature) {
             TopologyCache previous = cache;
-            cache = buildTopology(ship, signature);
-            migrateWater(previous, cache, state);
+            TopologyCache rebuilt = buildTopology(ship, signature);
+            if (hasBreachedBulkhead(previous, rebuilt)) {
+                cache = preserveCompartmentsAfterBreach(previous, rebuilt, state);
+            } else {
+                cache = rebuilt;
+                migrateWater(previous, cache, state);
+            }
             topology.put(ship.id(), cache);
             state.reconcile(cache);
         }
@@ -83,16 +88,12 @@ public final class ShipFloodingManager {
             double current = compartmentState.level;
 
             if (leaks.count() > 0) {
-                double headroom = Math.max(
-                        0.0,
-                        leaks.surface() - compartment.bottomY() - current * compartment.height()
-                );
+                double headroom = Math.max(0.0,
+                        leaks.surface() - compartment.bottomY() - current * compartment.height());
                 double pressure = clamp01(headroom / Math.max(1, compartment.height()));
                 double volumeFactor = 1.0 / Math.max(1.0, Math.sqrt(compartment.cells().size()));
-                double flow = Math.min(
-                        MAX_WATER_LEVEL_STEP,
-                        leaks.count() * FLOW_RATE * volumeFactor * (0.25 + pressure)
-                );
+                double flow = Math.min(MAX_WATER_LEVEL_STEP,
+                        leaks.count() * FLOW_RATE * volumeFactor * (0.25 + pressure));
                 compartmentState.level = Math.min(1.0, current + flow);
             } else if (current > 0.0) {
                 compartmentState.level = Math.max(0.0, current - DRAIN_RATE);
@@ -103,6 +104,10 @@ public final class ShipFloodingManager {
             leftLeaks += leaks.left();
             rightLeaks += leaks.right();
         }
+
+        // Water crosses a destroyed bulkhead gradually. Transfer is calculated
+        // in volume, then converted back to levels, so water is conserved.
+        transferBetweenCompartments(cache, state);
 
         double weightedFlood = 0.0;
         for (Compartment compartment : cache.compartments()) {
@@ -126,11 +131,112 @@ public final class ShipFloodingManager {
         applyFloodTrim(ship, cache, state);
     }
 
-    /**
-     * Rebuilds compartment levels from cell overlap. When a bulkhead is destroyed,
-     * the old compartment water volumes are summed into the new compartment, so
-     * opening a wall does not magically create or delete water.
-     */
+    private boolean hasBreachedBulkhead(TopologyCache oldCache, TopologyCache newCache) {
+        Set<Pos> removed = new HashSet<>(oldCache.hull());
+        removed.removeAll(newCache.hull());
+        if (removed.isEmpty() || oldCache.compartments().size() < 2) return false;
+
+        Map<Pos, Integer> owners = compartmentOwners(oldCache.compartments());
+        for (Pos hole : removed) {
+            Set<Integer> adjacent = new HashSet<>();
+            for (Pos direction : DIRECTIONS) {
+                Integer owner = owners.get(hole.add(direction));
+                if (owner != null) adjacent.add(owner);
+            }
+            if (adjacent.size() >= 2) return true;
+        }
+        return false;
+    }
+
+    private TopologyCache preserveCompartmentsAfterBreach(TopologyCache oldCache,
+                                                           TopologyCache newCache,
+                                                           FloodState state) {
+        Set<Pos> removed = new HashSet<>(oldCache.hull());
+        removed.removeAll(newCache.hull());
+        List<BulkheadLink> links = new ArrayList<>();
+        Map<Pos, Integer> owners = compartmentOwners(oldCache.compartments());
+
+        for (Pos hole : removed) {
+            Set<Integer> adjacent = new HashSet<>();
+            for (Pos direction : DIRECTIONS) {
+                Integer owner = owners.get(hole.add(direction));
+                if (owner != null) adjacent.add(owner);
+            }
+            if (adjacent.size() < 2) continue;
+
+            List<Integer> ids = new ArrayList<>(adjacent);
+            for (int i = 0; i < ids.size(); i++) {
+                for (int j = i + 1; j < ids.size(); j++) {
+                    Compartment a = oldCache.compartments().get(ids.get(i));
+                    Compartment b = oldCache.compartments().get(ids.get(j));
+                    addLink(links, a.seed(), b.seed());
+                }
+            }
+        }
+
+        return new TopologyCache(newCache.signature(), newCache.hull(), newCache.outside(),
+                oldCache.compartments(), List.copyOf(links));
+    }
+
+    private void addLink(List<BulkheadLink> links, Pos a, Pos b) {
+        if (a.equals(b)) return;
+        for (BulkheadLink link : links) {
+            if ((link.a().equals(a) && link.b().equals(b))
+                    || (link.a().equals(b) && link.b().equals(a))) {
+                link.incrementArea();
+                return;
+            }
+        }
+        links.add(new BulkheadLink(a, b, 1));
+    }
+
+    private Map<Pos, Integer> compartmentOwners(List<Compartment> compartments) {
+        Map<Pos, Integer> owners = new HashMap<>();
+        for (int i = 0; i < compartments.size(); i++) {
+            for (Pos cell : compartments.get(i).cells()) owners.put(cell, i);
+        }
+        return owners;
+    }
+
+    private void transferBetweenCompartments(TopologyCache cache, FloodState state) {
+        for (BulkheadLink link : cache.bulkheads()) {
+            CompartmentState a = state.compartments.get(link.a());
+            CompartmentState b = state.compartments.get(link.b());
+            if (a == null || b == null) continue;
+
+            Compartment ca = findCompartment(cache.compartments(), link.a());
+            Compartment cb = findCompartment(cache.compartments(), link.b());
+            if (ca == null || cb == null) continue;
+
+            double difference = a.level - b.level;
+            if (Math.abs(difference) < 0.0005) continue;
+
+            CompartmentState source = difference > 0.0 ? a : b;
+            CompartmentState target = difference > 0.0 ? b : a;
+            int sourceVolume = difference > 0.0 ? ca.cells().size() : cb.cells().size();
+            int targetVolume = difference > 0.0 ? cb.cells().size() : ca.cells().size();
+
+            double aperture = Math.min(4.0, Math.max(1.0, link.area()));
+            double transferVolume = Math.min(
+                    MAX_BULKHEAD_TRANSFER * Math.sqrt(sourceVolume * (double) targetVolume) * aperture,
+                    Math.abs(difference) * BULKHEAD_FLOW_RATE * Math.sqrt(sourceVolume * (double) targetVolume)
+            );
+            transferVolume = Math.min(transferVolume, source.level * sourceVolume);
+            if (transferVolume <= 0.0) continue;
+
+            source.level = clamp01(source.level - transferVolume / sourceVolume);
+            target.level = clamp01(target.level + transferVolume / targetVolume);
+        }
+    }
+
+    private Compartment findCompartment(List<Compartment> compartments, Pos seed) {
+        for (Compartment compartment : compartments) {
+            if (compartment.seed().equals(seed)) return compartment;
+        }
+        return null;
+    }
+
+    /** Rebuilds levels from cell overlap for ordinary topology changes. */
     private void migrateWater(TopologyCache oldCache, TopologyCache newCache, FloodState state) {
         if (oldCache.compartments().isEmpty() || newCache.compartments().isEmpty()) {
             state.compartments.clear();
@@ -148,23 +254,17 @@ public final class ShipFloodingManager {
         for (Compartment next : newCache.compartments()) {
             double waterVolume = 0.0;
             for (Pos cell : next.cells()) waterVolume += oldWater.getOrDefault(cell, 0.0);
-
             CompartmentState result = new CompartmentState();
             result.level = clamp01(waterVolume / Math.max(1, next.cells().size()));
             migrated.put(next.seed(), result);
         }
-
         state.compartments.clear();
         state.compartments.putAll(migrated);
     }
 
     private LeakInfo findLeaks(World world, Location position, ShipModel ship,
                                Set<Pos> hull, Set<Pos> outside, Compartment compartment) {
-        int leaks = 0;
-        int front = 0;
-        int rear = 0;
-        int left = 0;
-        int right = 0;
+        int leaks = 0, front = 0, rear = 0, left = 0, right = 0;
         double surfaceSum = 0.0;
         int samples = 0;
         List<Pos> points = new ArrayList<>();
@@ -173,10 +273,7 @@ public final class ShipFloodingManager {
         for (Pos cell : compartment.cells()) {
             for (Pos direction : DIRECTIONS) {
                 Pos adjacent = cell.add(direction);
-                if (hull.contains(adjacent) || !outside.contains(adjacent)) {
-                    continue;
-                }
-
+                if (hull.contains(adjacent) || !outside.contains(adjacent)) continue;
                 WaterSample sample = externalWater(world, position, ship, adjacent);
                 if (!sample.water()) continue;
 
@@ -184,12 +281,10 @@ public final class ShipFloodingManager {
                 surfaceSum += sample.surface();
                 samples++;
                 points.add(adjacent);
-
                 if (direction.z() > 0) front++;
                 else if (direction.z() < 0) rear++;
                 else if (direction.x() < 0) left++;
                 else if (direction.x() > 0) right++;
-
                 if (leaks >= MAX_LEAKS_PER_TICK) break outer;
             }
         }
@@ -203,15 +298,10 @@ public final class ShipFloodingManager {
         ShipRuntimeState runtime = registry.runtime(ship.id());
         if (runtime == null) return;
 
-        double totalWater = 0.0;
-        double xMoment = 0.0;
-        double zMoment = 0.0;
-        double bottomMoment = 0.0;
-
+        double totalWater = 0.0, xMoment = 0.0, zMoment = 0.0, bottomMoment = 0.0;
         for (Compartment compartment : cache.compartments()) {
             CompartmentState compartmentState = state.compartments.get(compartment.seed());
             if (compartmentState == null || compartmentState.level <= 0.0) continue;
-
             double volume = compartmentState.level * compartment.cells().size();
             double centerX = (compartment.minX() + compartment.maxX()) * 0.5;
             double centerZ = (compartment.minZ() + compartment.maxZ()) * 0.5;
@@ -231,32 +321,26 @@ public final class ShipFloodingManager {
         double centerX = xMoment / totalWater;
         double centerZ = zMoment / totalWater;
         double averageBottom = bottomMoment / totalWater;
-
         double hullMinX = cache.compartments().stream().mapToInt(Compartment::minX).min().orElse(0);
         double hullMaxX = cache.compartments().stream().mapToInt(Compartment::maxX).max().orElse(0);
         double hullMinZ = cache.compartments().stream().mapToInt(Compartment::minZ).min().orElse(0);
         double hullMaxZ = cache.compartments().stream().mapToInt(Compartment::maxZ).max().orElse(0);
         double halfX = Math.max(1.0, (hullMaxX - hullMinX) * 0.5);
         double halfZ = Math.max(1.0, (hullMaxZ - hullMinZ) * 0.5);
-
         double normalizedX = ((centerX - (hullMinX + hullMaxX) * 0.5) / halfX) * clamp01(ship.flooding());
         double normalizedZ = ((centerZ - (hullMinZ + hullMaxZ) * 0.5) / halfZ) * clamp01(ship.flooding());
         float targetRoll = (float) clamp(normalizedX * FLOOD_TRIM_STRENGTH, -7.0, 7.0);
         float targetPitch = (float) clamp(-normalizedZ * FLOOD_TRIM_STRENGTH, -7.0, 7.0);
-
         runtime.pitch(approach(runtime.pitch(), targetPitch, 0.10f));
         runtime.roll(approach(runtime.roll(), targetRoll, 0.10f));
 
         if (ship.flooding() > SINK_THRESHOLD) {
             double severity = (ship.flooding() - SINK_THRESHOLD) / (1.0 - SINK_THRESHOLD);
-            double sink = -Math.min(0.085, 0.012 + severity * 0.073);
-            runtime.verticalSpeed(Math.min(runtime.verticalSpeed(), sink));
+            runtime.verticalSpeed(Math.min(runtime.verticalSpeed(), -Math.min(0.085, 0.012 + severity * 0.073)));
         } else if (runtime.verticalSpeed() < 0.0) {
             runtime.verticalSpeed(runtime.verticalSpeed() * 0.90);
         }
 
-        // A lower average water-bearing deck increases draft gradually. The
-        // movement controller converts the scalar flood value into actual buoyancy.
         if (averageBottom > 0 && ship.flooding() > 0.35) {
             double extraDraft = Math.min(0.02, (ship.flooding() - 0.35) * 0.012);
             runtime.verticalSpeed(runtime.verticalSpeed() - extraDraft * 0.25);
@@ -268,7 +352,6 @@ public final class ShipFloodingManager {
         int minX = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE;
         int minY = Integer.MAX_VALUE, maxY = Integer.MIN_VALUE;
         int minZ = Integer.MAX_VALUE, maxZ = Integer.MIN_VALUE;
-
         for (ShipBlock block : ship.blocks()) {
             Pos p = new Pos(block.x(), block.y(), block.z());
             hull.add(p);
@@ -276,7 +359,7 @@ public final class ShipFloodingManager {
             minY = Math.min(minY, p.y()); maxY = Math.max(maxY, p.y());
             minZ = Math.min(minZ, p.z()); maxZ = Math.max(maxZ, p.z());
         }
-        if (hull.isEmpty()) return new TopologyCache(signature, hull, Set.of(), List.of());
+        if (hull.isEmpty()) return new TopologyCache(signature, hull, Set.of(), List.of(), List.of());
 
         Set<Pos> outside = floodOutside(hull, minX, maxX, minY, maxY, minZ, maxZ);
         Set<Pos> unvisited = new HashSet<>();
@@ -312,7 +395,7 @@ public final class ShipFloodingManager {
             }
             compartments.add(new Compartment(seed, cells));
         }
-        return new TopologyCache(signature, hull, outside, compartments);
+        return new TopologyCache(signature, hull, outside, compartments, List.of());
     }
 
     private Set<Pos> floodOutside(Set<Pos> hull, int minX, int maxX, int minY, int maxY, int minZ, int maxZ) {
@@ -324,7 +407,6 @@ public final class ShipFloodingManager {
         Pos start = new Pos(loX, loY, loZ);
         outside.add(start);
         queue.add(start);
-
         while (!queue.isEmpty() && outside.size() < MAX_CELLS * 2) {
             Pos current = queue.poll();
             for (Pos direction : DIRECTIONS) {
@@ -345,9 +427,7 @@ public final class ShipFloodingManager {
         int z = (int) Math.floor(position.getZ() + transformed.z() + 0.5);
         if (!world.isChunkLoaded(x >> 4, z >> 4)) return WaterSample.NONE;
         for (int sy = y + 2; sy >= y - 2; sy--) {
-            if (world.getBlockAt(x, sy, z).getType() == Material.WATER) {
-                return new WaterSample(true, sy + 1.0);
-            }
+            if (world.getBlockAt(x, sy, z).getType() == Material.WATER) return new WaterSample(true, sy + 1.0);
         }
         return WaterSample.NONE;
     }
@@ -375,7 +455,6 @@ public final class ShipFloodingManager {
         FloodState state = floodStates.get(ship.id());
         TopologyCache cache = topology.get(ship.id());
         if (state == null || cache == null) return List.of();
-
         List<CompartmentWater> result = new ArrayList<>();
         for (Compartment compartment : cache.compartments()) {
             CompartmentState compartmentState = state.compartments.get(compartment.seed());
@@ -438,13 +517,29 @@ public final class ShipFloodingManager {
         int height() { return Math.max(1, topY() - bottomY() + 1); }
     }
 
-    private record TopologyCache(long signature, Set<Pos> hull, Set<Pos> outside, List<Compartment> compartments) {}
-    private record LeakInfo(int count, int front, int rear, int left, int right, double surface, List<Pos> points) {}
+    private record TopologyCache(long signature, Set<Pos> hull, Set<Pos> outside,
+                                 List<Compartment> compartments, List<BulkheadLink> bulkheads) {}
+
+    private static final class BulkheadLink {
+        private final Pos a;
+        private final Pos b;
+        private int area;
+        private BulkheadLink(Pos a, Pos b, int area) { this.a = a; this.b = b; this.area = area; }
+        Pos a() { return a; }
+        Pos b() { return b; }
+        int area() { return area; }
+        void incrementArea() { area++; }
+    }
+
+    private record LeakInfo(int count, int front, int rear, int left, int right,
+                            double surface, List<Pos> points) {}
+
     private record WaterSample(boolean water, double surface) {
         private static final WaterSample NONE = new WaterSample(false, Double.NEGATIVE_INFINITY);
     }
 
     private static final class CompartmentState { private double level; }
+
     private static final class FloodState {
         private final Map<Pos, CompartmentState> compartments = new HashMap<>();
         private void reconcile(TopologyCache cache) {
