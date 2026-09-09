@@ -66,11 +66,37 @@ public final class ShipModel {
     public double floodRear() { return floodRear; }
     public double floodLeft() { return floodLeft; }
     public double floodRight() { return floodRight; }
+
+    /**
+     * Updates the observed external water distribution while retaining a slowly decaying
+     * directional breach pressure. This prevents a hull breach from losing its directional
+     * effect merely because the external-water sample changes for a tick.
+     */
     public void floodSides(double front, double rear, double left, double right) {
-        this.floodFront = clamp01(front);
-        this.floodRear = clamp01(rear);
-        this.floodLeft = clamp01(left);
-        this.floodRight = clamp01(right);
+        floodFront = combineFloodSide(floodFront, front);
+        floodRear = combineFloodSide(floodRear, rear);
+        floodLeft = combineFloodSide(floodLeft, left);
+        floodRight = combineFloodSide(floodRight, right);
+    }
+
+    /** Adds a persistent impulse for a newly created hull breach. */
+    public void addFloodSidePressure(double front, double rear, double left, double right) {
+        floodFront = Math.max(floodFront, clamp01(front));
+        floodRear = Math.max(floodRear, clamp01(rear));
+        floodLeft = Math.max(floodLeft, clamp01(left));
+        floodRight = Math.max(floodRight, clamp01(right));
+    }
+
+    /** Clears directional pressure when the flooding subsystem has no compartments left. */
+    public void clearFloodSides() {
+        floodFront = 0.0;
+        floodRear = 0.0;
+        floodLeft = 0.0;
+        floodRight = 0.0;
+    }
+
+    private static double combineFloodSide(double previous, double observed) {
+        return Math.max(clamp01(observed), clamp01(previous) * 0.992);
     }
 
     private static double clamp01(double value) { return Math.max(0.0, Math.min(1.0, value)); }
