@@ -67,6 +67,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         getServer().getPluginManager().registerEvents(new ShipProtectionListener(shipRegistry), this);
 
         this.floodingManager = new ShipFloodingManager(shipRegistry, displayManager);
+        this.movementController.floodingManager(floodingManager);
         this.floodVisualManager = new ShipFloodVisualManager(this, shipRegistry, floodingManager);
         this.projectileDamageManager = new ShipProjectileDamageManager(shipRegistry, damageManager, cannonManager);
 
