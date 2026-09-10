@@ -20,10 +20,9 @@ public final class ShipDisplayManager {
 
     public ShipDisplayManager(JavaPlugin plugin, int interpolationTicks) {
         this.plugin = plugin;
-        // A ship is a rigid body. Per-display interpolation makes neighbouring
-        // blocks follow different paths during rotation and creates visible gaps.
-        // Keep the constructor argument for config compatibility, but snap the
-        // complete pose every server tick so all block centres remain rigid.
+        // Translation interpolation is safe because every block receives the same
+        // translation delta. Rotation itself stays snapped so neighbouring blocks
+        // cannot follow different interpolated arcs and visually separate.
     }
 
     public void spawn(ShipModel ship) {
@@ -39,7 +38,7 @@ public final class ShipDisplayManager {
                     entity.setBlock(block.blockData().clone());
                     entity.setInterpolationDelay(0);
                     entity.setInterpolationDuration(0);
-                    entity.setTeleportDuration(0);
+                    entity.setTeleportDuration(1);
                     entity.setBillboard(org.bukkit.entity.Display.Billboard.FIXED);
                     entity.setTransformation(new Transformation(
                             new Vector3f(-0.5f, -0.5f, -0.5f),
@@ -62,7 +61,7 @@ public final class ShipDisplayManager {
         updatePose(ship, position, yaw, 0f, 0f);
     }
 
-    /** Applies exactly the same rigid transform to every block centre and rotation. */
+    /** Applies exactly the same rigid rotation to every block and smooths only translation. */
     public void updatePose(ShipModel ship, Location position, float yaw, float pitch, float roll) {
         Map<BlockKey, BlockDisplay> map = displays.get(ship.id());
         if (map == null || position == null) return;
@@ -82,7 +81,6 @@ public final class ShipDisplayManager {
             Vector3f center = new Vector3f(block.x() + 0.5f, block.y() + 0.5f, block.z() + 0.5f);
             rotation.transform(center);
             display.teleport(position.clone().add(center.x(), center.y(), center.z()));
-
             display.setTransformation(new Transformation(
                     new Vector3f(-0.5f, -0.5f, -0.5f),
                     new Quaternionf(rotation),
@@ -90,7 +88,7 @@ public final class ShipDisplayManager {
                     new Quaternionf()));
             display.setInterpolationDelay(0);
             display.setInterpolationDuration(0);
-            display.setTeleportDuration(0);
+            display.setTeleportDuration(1);
         }
     }
 
