@@ -12,47 +12,51 @@ import org.bukkit.event.block.BlockPlaceEvent;
 public final class ShipRepairListener implements Listener {
     private final ShipRegistry registry;
     private final ShipDisplayManager displays;
-    private final double maxDistanceSquared;
+    private final double maxBlockDistanceSquared;
 
-    public ShipRepairListener(ShipRegistry registry, ShipDisplayManager displays, double maxDistance) {
+    public ShipRepairListener(ShipRegistry registry, ShipDisplayManager displays, double maxBlockDistance) {
         this.registry = registry;
         this.displays = displays;
-        this.maxDistanceSquared = Math.max(4.0, maxDistance * maxDistance);
+        this.maxBlockDistanceSquared = Math.max(4.0, maxBlockDistance * maxDistance);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPlace(BlockPlaceEvent event) {
         Player player = event.getPlayer();
         Block placed = event.getBlockPlaced();
-        ShipModel ship = nearestShip(player, placed.getLocation());
+        ShipModel ship = nearestShip(placed.getLocation());
         if (ship == null) return;
         LocalPosition local = toLocal(ship, placed.getLocation());
         if (ship.containsBlock(local.x(), local.y(), local.z()) || !hasAdjacentHull(ship, local)) return;
-
         ShipBlock repaired = new ShipBlock(local.x(), local.y(), local.z(), placed.getBlockData().clone(), snapshot(placed));
         if (!ship.addBlock(repaired)) return;
         event.setCancelled(true);
-
         ShipRuntimeState runtime = registry.runtime(ship.id());
         displays.spawn(ship);
         if (runtime != null) displays.updatePose(ship, runtime.position(), ship.yaw(), runtime.pitch(), runtime.roll());
         player.sendActionBar("§aКорпус восстановлен §7(блоков: " + ship.blockCount() + ")");
     }
 
-    private ShipModel nearestShip(Player player, Location target) {
-        ShipModel result = null; double best = maxDistanceSquared;
+    private ShipModel nearestShip(Location target) {
+        ShipModel result = null; double best = maxBlockDistanceSquared;
         for (ShipModel ship : registry.all()) {
             if (ship.state() != ShipState.ACTIVE || !ship.worldId().equals(target.getWorld().getUID())) continue;
-            double distance = registry.position(ship).distanceSquared(target);
-            if (distance < best) { best = distance; result = ship; }
+            Location origin = registry.position(ship);
+            double yaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
+            double sin = Math.sin(yaw), cos = Math.cos(yaw);
+            for (ShipBlock block : ship.blocks()) {
+                double wx = origin.getX() + block.x() * cos - block.z() * sin;
+                double wz = origin.getZ() + block.x() * sin + block.z() * cos;
+                double d = target.distanceSquared(new Location(target.getWorld(), wx, origin.getY() + block.y(), wz));
+                if (d < best) { best = d; result = ship; }
+            }
         }
         return result;
     }
 
     private LocalPosition toLocal(ShipModel ship, Location world) {
         Location origin = registry.position(ship);
-        double dx = world.getBlockX() - origin.getX();
-        double dz = world.getBlockZ() - origin.getZ();
+        double dx = world.getBlockX() - origin.getX(), dz = world.getBlockZ() - origin.getZ();
         double yaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
         double cos = Math.cos(yaw), sin = Math.sin(yaw);
         int x = (int) Math.round(dx * cos + dz * sin);
