@@ -7,14 +7,37 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Set up Java 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '25'
           cache: maven
+
+      - name: Verify Java
+        run: java -version
+
       - name: Build plugin
-        run: mvn -B -DskipTests package
+        run: mvn -B clean package
+
+      - name: Verify JAR
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f target/BoatsMove-*.jar
+          echo "Built plugin:"
+          ls -lh target/BoatsMove-*.jar
+
+      - name: Upload plugin JAR
+        uses: actions/upload-artifact@v4
+        with:
+          name: BoatsMove-${{ github.sha }}
+          path: target/BoatsMove-*.jar
+          if-no-files-found: error
+          retention-days: 30
