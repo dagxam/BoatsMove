@@ -21,13 +21,16 @@ public final class VirtualBlockInteraction implements Listener {
     private final ShipRegistry registry;
     private final VirtualChestManager chests;
     private final ShipPassengerManager passengers;
+    private final ShipControlMenuManager controlMenu;
     private ShipDamageManager damageManager;
     private ShipCannonManager cannonManager;
 
-    public VirtualBlockInteraction(ShipRegistry registry, VirtualChestManager chests, ShipPassengerManager passengers) {
+    public VirtualBlockInteraction(ShipRegistry registry, VirtualChestManager chests,
+                                   ShipPassengerManager passengers, ShipControlMenuManager controlMenu) {
         this.registry = registry;
         this.chests = chests;
         this.passengers = passengers;
+        this.controlMenu = controlMenu;
     }
 
     public void damageManager(ShipDamageManager damageManager) { this.damageManager = damageManager; }
@@ -39,17 +42,20 @@ public final class VirtualBlockInteraction implements Listener {
         Action action = event.getAction();
         if (action != Action.RIGHT_CLICK_AIR && action != Action.RIGHT_CLICK_BLOCK
                 && action != Action.LEFT_CLICK_AIR && action != Action.LEFT_CLICK_BLOCK) return;
-
         Player player = event.getPlayer();
         VirtualHit hit = findHit(player);
         if (hit == null) return;
         event.setCancelled(true);
 
         if (action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK) {
+            if (hit.block().blockData().getMaterial() == org.bukkit.Material.LECTERN && controlMenu != null) {
+                controlMenu.openMenu(player, hit.ship(), null);
+                return;
+            }
             if (cannonManager != null && cannonManager.handle(player, hit)) return;
             if (chests.open(player, hit)) return;
             if (!passengers.hasPassenger(hit.ship()) && passengers.board(hit.ship(), player)) {
-                player.sendMessage("§aВы заняли место управления. W/S — движение, A/D — поворот, Shift — выйти.");
+                player.sendMessage("§aМесто управления занято. W — вперёд, S — назад, A — влево, D — вправо, Shift — выйти.");
                 return;
             }
         }
