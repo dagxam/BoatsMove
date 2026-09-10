@@ -6,14 +6,14 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Transformation;
 import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-/** Renders an active ship as its original blocks using display entities. */
+/** Renders an active ship as one rigid visual structure using display entities. */
 public final class ShipDisplayManager {
     private final JavaPlugin plugin;
     private final Map<UUID, Map<BlockKey, BlockDisplay>> displays = new HashMap<>();
@@ -55,30 +55,24 @@ public final class ShipDisplayManager {
         updatePose(ship, position, yaw, 0f, 0f);
     }
 
-    /** Updates every display to the exact rigid-body pose, including buoyancy tilt. */
+    /** Applies exactly the same rigid quaternion to every block of the ship. */
     public void updatePose(ShipModel ship, Location position, float yaw, float pitch, float roll) {
         Map<BlockKey, BlockDisplay> map = displays.get(ship.id());
         if (map == null || position == null) return;
-        double relativeYaw = Math.toRadians(yaw - ship.origin().getYaw());
-        double sin = Math.sin(relativeYaw), cos = Math.cos(relativeYaw);
-        double p = Math.toRadians(pitch), r = Math.toRadians(roll);
+        float relativeYaw = yaw - ship.origin().getYaw();
+        Quaternionf rotation = new Quaternionf()
+                .rotateY((float) Math.toRadians(relativeYaw))
+                .rotateX((float) Math.toRadians(pitch))
+                .rotateZ((float) Math.toRadians(roll));
+
         for (ShipBlock block : ship.blocks()) {
             BlockDisplay display = map.get(new BlockKey(block.x(), block.y(), block.z()));
             if (display == null || !display.isValid()) continue;
-
-            double x = block.x(), y = block.y(), z = block.z();
-            double yawX = x * cos - z * sin;
-            double yawZ = x * sin + z * cos;
-            double pitchY = y * Math.cos(p) - yawZ * Math.sin(p);
-            double pitchZ = y * Math.sin(p) + yawZ * Math.cos(p);
-            double rollX = yawX * Math.cos(r) - pitchY * Math.sin(r);
-            double rollY = yawX * Math.sin(r) + pitchY * Math.cos(r);
-
-            display.teleport(position.clone().add(rollX, rollY, pitchZ));
+            Vector3f localCenter = new Vector3f(block.x() + 0.5f, block.y() + 0.5f, block.z() + 0.5f);
+            rotation.transformPosition(localCenter);
+            display.teleport(position.clone().add(localCenter.x - 0.5, localCenter.y - 0.5, localCenter.z - 0.5));
             Transformation current = display.getTransformation();
-            Quaternionf rotation = new Quaternionf().rotateY((float) relativeYaw)
-                    .rotateX((float) p).rotateZ((float) r);
-            display.setTransformation(new Transformation(current.getTranslation(), rotation,
+            display.setTransformation(new Transformation(current.getTranslation(), new Quaternionf(rotation),
                     current.getScale(), current.getRightRotation()));
         }
     }
@@ -89,7 +83,6 @@ public final class ShipDisplayManager {
         for (BlockDisplay display : map.values()) if (display.isValid()) display.teleport(display.getLocation().add(dx, dy, dz));
     }
 
-    /** Removes the display belonging to one exact local ship block. */
     public boolean removeBlock(UUID shipId, int x, int y, int z) {
         Map<BlockKey, BlockDisplay> map = displays.get(shipId);
         if (map == null) return false;

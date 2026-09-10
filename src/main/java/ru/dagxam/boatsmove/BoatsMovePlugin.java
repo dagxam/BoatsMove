@@ -31,7 +31,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         Material activationBlock=readMaterial("ships.activation-block",Material.OAK_BUTTON);
         getServer().getPluginManager().registerEvents(new ShipActivationListener(activationBlock,activationService,passengerManager),this);
         storage=new VirtualChestManager(shipRegistry); getServer().getPluginManager().registerEvents(storage,this);
-        VirtualBlockInteraction interaction=new VirtualBlockInteraction(shipRegistry,storage);
+        VirtualBlockInteraction interaction=new VirtualBlockInteraction(shipRegistry,storage,passengerManager);
         ShipDamageManager damageManager=new ShipDamageManager(shipRegistry,activationService,displayManager); interaction.damageManager(damageManager);
         cannonManager=new ShipCannonManager(this,shipRegistry); interaction.cannonManager(cannonManager);
         getServer().getPluginManager().registerEvents(interaction,this);

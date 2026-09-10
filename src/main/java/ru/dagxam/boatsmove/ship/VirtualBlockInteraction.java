@@ -20,12 +20,14 @@ public final class VirtualBlockInteraction implements Listener {
     private static final double EPSILON = 1.0E-7;
     private final ShipRegistry registry;
     private final VirtualChestManager chests;
+    private final ShipPassengerManager passengers;
     private ShipDamageManager damageManager;
     private ShipCannonManager cannonManager;
 
-    public VirtualBlockInteraction(ShipRegistry registry, VirtualChestManager chests) {
+    public VirtualBlockInteraction(ShipRegistry registry, VirtualChestManager chests, ShipPassengerManager passengers) {
         this.registry = registry;
         this.chests = chests;
+        this.passengers = passengers;
     }
 
     public void damageManager(ShipDamageManager damageManager) { this.damageManager = damageManager; }
@@ -43,9 +45,13 @@ public final class VirtualBlockInteraction implements Listener {
         if (hit == null) return;
         event.setCancelled(true);
 
-        if ((action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK)) {
+        if (action == Action.RIGHT_CLICK_AIR || action == Action.RIGHT_CLICK_BLOCK) {
             if (cannonManager != null && cannonManager.handle(player, hit)) return;
             if (chests.open(player, hit)) return;
+            if (!passengers.hasPassenger(hit.ship()) && passengers.board(hit.ship(), player)) {
+                player.sendMessage("§aВы заняли место управления. W/S — движение, A/D — поворот, Shift — выйти.");
+                return;
+            }
         }
 
         if ((action == Action.LEFT_CLICK_AIR || action == Action.LEFT_CLICK_BLOCK) && damageManager != null) {

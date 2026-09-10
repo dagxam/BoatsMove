@@ -39,7 +39,7 @@ public final class ShipPassengerManager {
         if (player == null || !player.isOnline()) return;
         Location shipPosition = registry.position(ship);
         double yaw = Math.toRadians(ship.yaw());
-        Location exit = shipPosition.clone().add(1.5 * Math.cos(yaw), 1.0, 1.5 * Math.sin(yaw));
+        Location exit = shipPosition.clone().add(-1.5 * Math.sin(yaw), 1.0, 1.5 * Math.cos(yaw));
         player.teleport(exit);
     }
 
@@ -51,7 +51,7 @@ public final class ShipPassengerManager {
         return ship == null ? null : passengers.get(ship.id());
     }
 
-    /** Keeps the pilot seated and returns whether control is still active. */
+    /** Keeps the pilot seated while leaving camera/head rotation completely free. */
     public boolean tick(ShipModel ship) {
         if (ship == null || !hasPassenger(ship)) return false;
         UUID playerId = passengers.get(ship.id());
@@ -90,12 +90,13 @@ public final class ShipPassengerManager {
         if (player == null || !player.isOnline()) return;
         Location shipPosition = registry.position(ship);
         Location offset = seatOffsets.getOrDefault(ship.id(), new Location(null, 0.5, 1.15, 0.5));
-        double yaw = Math.toRadians(ship.yaw());
-        double worldX = offset.getX() * Math.cos(yaw) - offset.getZ() * Math.sin(yaw);
-        double worldZ = offset.getX() * Math.sin(yaw) + offset.getZ() * Math.cos(yaw);
+        double relativeYaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
+        double worldX = offset.getX() * Math.cos(relativeYaw) - offset.getZ() * Math.sin(relativeYaw);
+        double worldZ = offset.getX() * Math.sin(relativeYaw) + offset.getZ() * Math.cos(relativeYaw);
         Location seat = shipPosition.clone().add(worldX, offset.getY(), worldZ);
-        seat.setYaw(ship.yaw());
-        seat.setPitch(0);
+        // Do not set yaw/pitch: the player's camera/head must remain under player control.
+        seat.setYaw(player.getYaw());
+        seat.setPitch(player.getPitch());
         player.teleport(seat);
     }
 
