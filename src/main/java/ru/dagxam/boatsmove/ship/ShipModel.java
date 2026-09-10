@@ -5,6 +5,7 @@ import org.bukkit.World;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /** Authoritative logical model of an active player-built ship. */
@@ -43,7 +44,6 @@ public final class ShipModel {
     public UUID ownerId() { return ownerId; }
     public UUID worldId() { return worldId; }
     public Location origin() { return origin.clone(); }
-    /** Changes only the saved/reference heading; block coordinates are unchanged. */
     public void originYaw(float yaw) { origin.setYaw(yaw); }
     public List<ShipBlock> blocks() { return List.copyOf(blocks); }
     public ShipState state() { return state; }
@@ -108,27 +108,36 @@ public final class ShipModel {
         if (health >= maxHealth) flooding(0.0);
     }
 
-    public void addBlock(ShipBlock block) {
-        if (block == null) return;
-        for (ShipBlock existing : blocks) {
-            if (existing.x() == block.x() && existing.y() == block.y() && existing.z() == block.z()) return;
+    public boolean containsBlock(int x, int y, int z) {
+        return findBlock(x, y, z).isPresent();
+    }
+
+    public Optional<ShipBlock> findBlock(int x, int y, int z) {
+        for (ShipBlock block : blocks) {
+            if (block.x() == x && block.y() == y && block.z() == z) return Optional.of(block);
         }
+        return Optional.empty();
+    }
+
+    public boolean addBlock(ShipBlock block) {
+        if (block == null || containsBlock(block.x(), block.y(), block.z())) return false;
         blocks.add(block);
         shipClass = ShipClass.fromBlockCount(blocks.size());
         maxHealth += 2.0;
         health = Math.min(maxHealth, health + 2.0);
+        return true;
     }
 
-    public boolean removeBlock(int x, int y, int z) {
+    public Optional<ShipBlock> removeBlock(int x, int y, int z) {
         for (int i = 0; i < blocks.size(); i++) {
             ShipBlock block = blocks.get(i);
             if (block.x() == x && block.y() == y && block.z() == z) {
                 blocks.remove(i);
                 shipClass = ShipClass.fromBlockCount(blocks.size());
-                return true;
+                return Optional.of(block);
             }
         }
-        return false;
+        return Optional.empty();
     }
 
     public int blockCount() { return blocks.size(); }
