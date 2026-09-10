@@ -64,6 +64,7 @@ public final class ShipPersistenceManager {
         yaml.set(p + ".health", ship.health());
         yaml.set(p + ".max-health", ship.maxHealth());
         yaml.set(p + ".flooding", ship.flooding());
+        yaml.set(p + ".origin-yaw", ship.origin().getYaw());
         yaml.set(p + ".yaw", ship.yaw());
         yaml.set(p + ".pitch", ship.pitch());
 
@@ -93,9 +94,7 @@ public final class ShipPersistenceManager {
             if (state != null) {
                 yaml.set(b + ".state-type", state.stateType());
                 List<ItemStack> items = new ArrayList<>();
-                for (ItemStack item : state.inventory()) {
-                    items.add(item == null ? null : item.clone());
-                }
+                for (ItemStack item : state.inventory()) items.add(item == null ? null : item.clone());
                 yaml.set(b + ".inventory", items);
             }
         }
@@ -140,7 +139,8 @@ public final class ShipPersistenceManager {
                     positionWorld = world;
                 }
 
-                Location origin = new Location(world, pos.getDouble("x"), pos.getDouble("y"), pos.getDouble("z"));
+                float originYaw = (float) section.getDouble(idText + ".origin-yaw", pos.getDouble("yaw", 0.0));
+                Location origin = new Location(world, pos.getDouble("x"), pos.getDouble("y"), pos.getDouble("z"), originYaw, 0.0f);
                 List<ShipBlock> blocks = loadBlocks(section, idText);
                 if (blocks.isEmpty()) throw new IllegalArgumentException("нет блоков");
 
@@ -157,7 +157,8 @@ public final class ShipPersistenceManager {
                 ship.maxHealth(section.getDouble(idText + ".max-health", ship.maxHealth()));
                 ship.health(section.getDouble(idText + ".health", ship.maxHealth()));
                 ship.flooding(section.getDouble(idText + ".flooding", 0.0));
-                ship.yaw((float) section.getDouble(idText + ".yaw", origin.getYaw()));
+                ship.originYaw(originYaw);
+                ship.yaw((float) section.getDouble(idText + ".yaw", originYaw));
                 ship.pitch((float) section.getDouble(idText + ".pitch", origin.getPitch()));
                 ship.state(ShipState.ACTIVE);
 
@@ -178,9 +179,7 @@ public final class ShipPersistenceManager {
             }
         }
 
-        if (loaded > 0) {
-            plugin.getLogger().info("Загружено сохранённых кораблей: " + loaded);
-        }
+        if (loaded > 0) plugin.getLogger().info("Загружено сохранённых кораблей: " + loaded);
         return loaded;
     }
 
@@ -210,24 +209,19 @@ public final class ShipPersistenceManager {
         return blocks;
     }
 
-    private double safeFinite(double value) {
-        return Double.isFinite(value) ? value : 0.0;
-    }
+    private double safeFinite(double value) { return Double.isFinite(value) ? value : 0.0; }
 
     private ItemStack[] readInventory(List<?> list) {
         if (list == null) return new ItemStack[0];
         ItemStack[] result = new ItemStack[list.size()];
         for (int i = 0; i < list.size(); i++) {
             Object value = list.get(i);
-            if (value instanceof ItemStack item) {
-                result[i] = item.clone();
-            } else if (value instanceof Map<?, ?> map) {
+            if (value instanceof ItemStack item) result[i] = item.clone();
+            else if (value instanceof Map<?, ?> map) {
                 try {
                     @SuppressWarnings("unchecked") Map<String, Object> cast = (Map<String, Object>) map;
                     result[i] = ItemStack.deserialize(cast);
-                } catch (RuntimeException ignored) {
-                    result[i] = null;
-                }
+                } catch (RuntimeException ignored) { result[i] = null; }
             }
         }
         return result;
