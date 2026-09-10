@@ -2,7 +2,7 @@
 # Core configuration for player-built virtual ships.
 
 ships:
-  activation-block: OAK_BUTTON
+  activation-block: LECTERN
   max-blocks: 5000
   min-blocks: 2
 
@@ -33,9 +33,6 @@ movement:
   interpolation-ticks: 2
   water-only: true
 
-# Optional systems. If a ship contains at least one configured system block,
-# its surviving count becomes the baseline for damage. Removing half of the
-# engines/steering blocks therefore gives roughly half of the corresponding power.
 systems:
   engine-blocks:
     - FURNACE
