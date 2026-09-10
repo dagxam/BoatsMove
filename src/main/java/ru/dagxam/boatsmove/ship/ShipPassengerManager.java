@@ -53,7 +53,6 @@ public final class ShipPassengerManager implements Listener {
         Float previous = lastPilotYaw.put(ship.id(), current);
         if (previous == null) return 0.0f;
         float delta = normalizeDelta(current - previous);
-        // Prevent a lag spike or vehicle exit/enter from producing an instant 180° turn.
         return clamp(delta, -10.0f, 10.0f);
     }
 
@@ -110,6 +109,11 @@ public final class ShipPassengerManager implements Listener {
         if (!seat.getPassengers().contains(player)) {
             removeSeat(ship);
             return false;
+        }
+
+        float mouseDelta = consumeMouseYawDelta(ship, player);
+        if (Math.abs(mouseDelta) > 0.001f) {
+            ship.yaw(ship.yaw() + mouseDelta);
         }
 
         seat.teleport(seatLocation(ship, offsets.getOrDefault(ship.id(), new SeatOffset(0.5, 1.15, 0.5))));
