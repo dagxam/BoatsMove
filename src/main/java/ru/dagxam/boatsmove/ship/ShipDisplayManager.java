@@ -19,10 +19,11 @@ public final class ShipDisplayManager {
     private final Map<UUID, Map<BlockKey, BlockDisplay>> displays = new HashMap<>();
 
     public ShipDisplayManager(JavaPlugin plugin, int interpolationTicks) {
+        this.plugin = plugin;
         // A ship is a rigid body. Per-display interpolation makes neighbouring
-        // blocks follow different straight-line paths during rotation and creates
-        // visible gaps. Keep the constructor for config compatibility, but snap
-        // the whole pose every server tick so all block centres stay rigid.
+        // blocks follow different paths during rotation and creates visible gaps.
+        // Keep the constructor argument for config compatibility, but snap the
+        // complete pose every server tick so all block centres remain rigid.
     }
 
     public void spawn(ShipModel ship) {
@@ -33,8 +34,6 @@ public final class ShipDisplayManager {
         Map<BlockKey, BlockDisplay> created = new HashMap<>();
         try {
             for (ShipBlock block : ship.blocks()) {
-                // Place the entity at the block centre and render the block back
-                // by 0.5. This makes the centre the rotation pivot.
                 Location center = origin.clone().add(block.x() + 0.5, block.y() + 0.5, block.z() + 0.5);
                 BlockDisplay display = world.spawn(center, BlockDisplay.class, entity -> {
                     entity.setBlock(block.blockData().clone());
@@ -84,12 +83,11 @@ public final class ShipDisplayManager {
             rotation.transform(center);
             display.teleport(position.clone().add(center.x(), center.y(), center.z()));
 
-            Transformation current = display.getTransformation();
             display.setTransformation(new Transformation(
                     new Vector3f(-0.5f, -0.5f, -0.5f),
                     new Quaternionf(rotation),
-                    current.getScale(),
-                    current.getRightRotation()));
+                    new Vector3f(1f, 1f, 1f),
+                    new Quaternionf()));
             display.setInterpolationDelay(0);
             display.setInterpolationDuration(0);
             display.setTeleportDuration(0);
