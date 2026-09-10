@@ -5,14 +5,16 @@ import org.bukkit.World;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Transformation;
+import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Renders an active ship as one rigid visual structure using display entities. */
+/** Renders an active ship as a rigid visual structure using display entities. */
 public final class ShipDisplayManager {
     private final JavaPlugin plugin;
     private final Map<UUID, Map<BlockKey, BlockDisplay>> displays = new HashMap<>();
@@ -31,13 +33,21 @@ public final class ShipDisplayManager {
         Map<BlockKey, BlockDisplay> created = new HashMap<>();
         try {
             for (ShipBlock block : ship.blocks()) {
-                Location location = origin.clone().add(block.x(), block.y(), block.z());
-                BlockDisplay display = world.spawn(location, BlockDisplay.class, entity -> {
+                // The entity is placed at the block centre. The -0.5 translation
+                // moves the rendered block back so its rotation pivot is exactly
+                // its centre instead of its lower corner.
+                Location center = origin.clone().add(block.x() + 0.5, block.y() + 0.5, block.z() + 0.5);
+                BlockDisplay display = world.spawn(center, BlockDisplay.class, entity -> {
                     entity.setBlock(block.blockData().clone());
                     entity.setInterpolationDelay(0);
                     entity.setInterpolationDuration(interpolationTicks);
                     entity.setTeleportDuration(interpolationTicks);
                     entity.setBillboard(org.bukkit.entity.Display.Billboard.FIXED);
+                    entity.setTransformation(new Transformation(
+                            new Vector3f(-0.5f, -0.5f, -0.5f),
+                            new Quaternionf(),
+                            new Vector3f(1f, 1f, 1f),
+                            new Quaternionf()));
                     entity.getPersistentDataContainer().set(new org.bukkit.NamespacedKey(plugin, "ship_id"),
                             org.bukkit.persistence.PersistentDataType.STRING, ship.id().toString());
                 });
@@ -54,47 +64,31 @@ public final class ShipDisplayManager {
         updatePose(ship, position, yaw, 0f, 0f);
     }
 
-    /** Applies one identical rigid rotation to every display. */
+    /** Rotates every block around its own centre while moving every centre by the same ship transform. */
     public void updatePose(ShipModel ship, Location position, float yaw, float pitch, float roll) {
         Map<BlockKey, BlockDisplay> map = displays.get(ship.id());
         if (map == null || position == null) return;
+
         float yawRad = (float) Math.toRadians(yaw - ship.origin().getYaw());
         float pitchRad = (float) Math.toRadians(pitch);
         float rollRad = (float) Math.toRadians(roll);
-
-        // JOML composes these rotations by quaternion multiplication. Build the
-        // quaternion in reverse order so its vector transform is exactly the
-        // same Y -> X -> Z order used below for block positions.
         Quaternionf rotation = new Quaternionf()
-                .rotateZ(rollRad)
+                .rotateY(yawRad)
                 .rotateX(pitchRad)
-                .rotateY(yawRad);
-
-        double cy = Math.cos(yawRad), sy = Math.sin(yawRad);
-        double cp = Math.cos(pitchRad), sp = Math.sin(pitchRad);
-        double cr = Math.cos(rollRad), sr = Math.sin(rollRad);
+                .rotateZ(rollRad);
 
         for (ShipBlock block : ship.blocks()) {
             BlockDisplay display = map.get(new BlockKey(block.x(), block.y(), block.z()));
             if (display == null || !display.isValid()) continue;
 
-            // Rotate the block centre around the same ship origin used by the
-            // display entities, then convert the centre back to the entity's
-            // block-corner position. This keeps neighbouring blocks locked
-            // together instead of rotating around their own separate pivots.
-            double x = block.x() + 0.5;
-            double y = block.y() + 0.5;
-            double z = block.z() + 0.5;
+            // The ship transform is applied to the centre of every block.
+            // Because every display also has a -0.5 local translation, its
+            // geometry rotates around that centre and cannot swing around a corner.
+            Vector3f localCenter = new Vector3f(block.x() + 0.5f, block.y() + 0.5f, block.z() + 0.5f);
+            rotation.transform(localCenter);
+            Location center = position.clone().add(localCenter.x(), localCenter.y(), localCenter.z());
+            display.teleport(center);
 
-            // Yaw -> pitch -> roll, matching the quaternion above.
-            double yawX = x * cy - z * sy;
-            double yawZ = x * sy + z * cy;
-            double pitchY = y * cp - yawZ * sp;
-            double pitchZ = y * sp + yawZ * cp;
-            double worldX = yawX * cr - pitchY * sr;
-            double worldY = yawX * sr + pitchY * cr;
-
-            display.teleport(position.clone().add(worldX - 0.5, worldY - 0.5, pitchZ - 0.5));
             Transformation current = display.getTransformation();
             display.setTransformation(new Transformation(
                     current.getTranslation(),
