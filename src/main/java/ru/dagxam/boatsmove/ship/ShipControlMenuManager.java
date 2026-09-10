@@ -32,27 +32,21 @@ public final class ShipControlMenuManager implements Listener {
     private static final int SCANNER_SLOT = 2;
     private static final int INFO_SLOT = 4;
     private static final int EXIT_SLOT = 8;
-
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
     private final ShipActivationService activationService;
     private final ShipPassengerManager passengers;
     private final NamespacedKey controllerKey;
     private final Map<UUID, Location> pendingControls = new HashMap<>();
+    private final Map<UUID, UUID> menuShips = new HashMap<>();
 
-    public ShipControlMenuManager(JavaPlugin plugin, ShipRegistry registry,
-                                  ShipActivationService activationService,
-                                  ShipPassengerManager passengers) {
-        this.plugin = plugin;
-        this.registry = registry;
-        this.activationService = activationService;
-        this.passengers = passengers;
+    public ShipControlMenuManager(JavaPlugin plugin, ShipRegistry registry, ShipActivationService activationService, ShipPassengerManager passengers) {
+        this.plugin = plugin; this.registry = registry; this.activationService = activationService; this.passengers = passengers;
         this.controllerKey = new NamespacedKey(plugin, "ship_controller");
     }
 
     public void registerRecipe() {
-        ItemStack result = controllerItem();
-        ShapedRecipe recipe = new ShapedRecipe(new NamespacedKey(plugin, "ship_controller"), result);
+        ShapedRecipe recipe = new ShapedRecipe(new NamespacedKey(plugin, "ship_controller"), controllerItem());
         recipe.shape("   ", "SSS", "PPP");
         recipe.setIngredient('S', Material.OAK_SLAB);
         recipe.setIngredient('P', Material.OAK_PLANKS);
@@ -73,17 +67,11 @@ public final class ShipControlMenuManager implements Listener {
     public void onControllerInteract(PlayerInteractEvent event) {
         if (event.getHand() != EquipmentSlot.HAND || event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
         if (event.getClickedBlock() == null || event.getClickedBlock().getType() != Material.LECTERN) return;
-        event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY);
-        event.setCancelled(true);
-
+        event.setUseInteractedBlock(org.bukkit.event.Event.Result.DENY); event.setCancelled(true);
         Player player = event.getPlayer();
         ShipModel ship = findActiveShipAt(event.getClickedBlock().getLocation());
-        if (ship != null) {
-            pendingControls.remove(player.getUniqueId());
-            openMenu(player, ship, null);
-        } else {
-            openMenu(player, null, event.getClickedBlock().getLocation());
-        }
+        if (ship != null) openMenu(player, ship, null);
+        else openMenu(player, null, event.getClickedBlock().getLocation());
     }
 
     public void openMenu(Player player, ShipModel ship, Location control) {
@@ -91,11 +79,13 @@ public final class ShipControlMenuManager implements Listener {
         boolean active = ship != null;
         inventory.setItem(SCANNER_SLOT, button(active ? Material.REDSTONE_BLOCK : Material.EMERALD_BLOCK,
                 active ? "§cОтключить корабль" : "§aЗапустить сканер",
-                active ? "§7Вернуть корабль в блоки" : "§7Просканировать конструкцию и запустить"));
+                active ? "§7Вернуть корабль в обычные блоки" : "§7Просканировать конструкцию и запустить"));
         inventory.setItem(INFO_SLOT, button(Material.BOOK, "§bИнформация о корабле",
                 active ? "§7Размер, класс, прочность и затопление" : "§7Проверить контрольный блок"));
         inventory.setItem(EXIT_SLOT, button(Material.BARRIER, "§cВыход", "§7Закрыть меню"));
-        if (control != null) pendingControls.put(player.getUniqueId(), control.clone());
+        UUID id = player.getUniqueId();
+        if (ship != null) { menuShips.put(id, ship.id()); pendingControls.remove(id); }
+        else { menuShips.remove(id); pendingControls.put(id, control == null ? null : control.clone()); }
         player.openInventory(inventory);
     }
 
@@ -105,71 +95,57 @@ public final class ShipControlMenuManager implements Listener {
         event.setCancelled(true);
         if (!(event.getWhoClicked() instanceof Player player)) return;
         if (event.getClickedInventory() == null || event.getClickedInventory() != event.getView().getTopInventory()) return;
-
         int slot = event.getRawSlot();
-        if (slot == EXIT_SLOT) {
-            player.closeInventory();
-            return;
-        }
+        if (slot == EXIT_SLOT) { player.closeInventory(); return; }
         if (slot == INFO_SLOT) {
             ShipModel ship = shipForMenu(player);
-            if (ship == null) {
-                Location control = pendingControls.get(player.getUniqueId());
-                player.sendMessage(control == null ? "§cКонтрольный блок не найден." : "§bСканер готов. §7Нажмите зелёную кнопку запуска.");
-            } else sendInfo(player, ship);
+            if (ship == null) player.sendMessage("§bСканер готов. §7Нажмите зелёную кнопку запуска."); else sendInfo(player, ship);
             return;
         }
         if (slot != SCANNER_SLOT) return;
-
         ShipModel ship = shipForMenu(player);
         if (ship != null) {
             ShipActivationService.Result result = activationService.deactivate(ship);
             player.closeInventory();
             player.sendMessage(result.success() ? ChatColor.GREEN + result.message() : result.message());
-            if (result.success()) player.sendMessage("§aКорабль снова стал обычными блоками. Его можно достраивать и изменять.");
+            if (result.success()) player.sendMessage("§aКорабль восстановлен блоками. Теперь его можно достраивать и изменять.");
             return;
         }
-
         Location control = pendingControls.get(player.getUniqueId());
         if (control == null || control.getWorld() == null || control.getBlock().getType() != Material.LECTERN) {
-            player.closeInventory();
-            player.sendMessage("§cКафедра управления не найдена на исходном месте.");
-            return;
+            player.closeInventory(); player.sendMessage("§cКафедра управления не найдена на исходном месте."); return;
         }
-
         ShipActivationService.Result result = activationService.activate(player, control.getBlock());
         player.closeInventory();
         player.sendMessage(result.success() ? ChatColor.GREEN + result.message() : result.message());
         if (!result.success() || result.ship() == null) return;
-
-        result.ship().originYaw(player.getYaw());
-        result.ship().yaw(player.getYaw());
-        if (!passengers.board(result.ship(), player)) {
-            player.sendMessage("§eКорабль запущен. Место управления занять не удалось.");
-        }
+        result.ship().originYaw(player.getYaw()); result.ship().yaw(player.getYaw());
+        if (!passengers.board(result.ship(), player)) player.sendMessage("§eКорабль запущен, но место управления занять не удалось.");
         player.sendMessage("§bУправление: W — вперёд, S — назад, A — влево, D — вправо, Shift — выйти.");
     }
 
     @EventHandler
     public void onMenuClose(InventoryCloseEvent event) {
-        if (TITLE.equals(event.getView().getTitle())) pendingControls.remove(event.getPlayer().getUniqueId());
+        if (!TITLE.equals(event.getView().getTitle())) return;
+        UUID id = event.getPlayer().getUniqueId(); pendingControls.remove(id); menuShips.remove(id);
     }
 
     private ShipModel shipForMenu(Player player) {
+        UUID shipId = menuShips.get(player.getUniqueId());
+        if (shipId != null) {
+            ShipModel ship = registry.get(shipId);
+            if (ship != null && ship.state() == ShipState.ACTIVE) return ship;
+        }
         Location control = pendingControls.get(player.getUniqueId());
-        if (control == null) return null;
-        return findActiveShipAt(control);
+        return control == null ? null : findActiveShipAt(control);
     }
 
     private ShipModel findActiveShipAt(Location location) {
-        World world = location.getWorld();
-        if (world == null) return null;
-        double best = 2.0;
-        ShipModel nearest = null;
+        World world = location.getWorld(); if (world == null) return null;
+        double best = 2.0; ShipModel nearest = null;
         for (ShipModel ship : registry.all()) {
             if (ship.state() != ShipState.ACTIVE || !ship.worldId().equals(world.getUID())) continue;
-            ShipRuntimeState runtime = registry.runtime(ship.id());
-            if (runtime == null) continue;
+            ShipRuntimeState runtime = registry.runtime(ship.id()); if (runtime == null) continue;
             double distance = runtime.position().distanceSquared(location.clone().add(0.5, 0.5, 0.5));
             if (distance <= best) { best = distance; nearest = ship; }
         }
@@ -186,11 +162,7 @@ public final class ShipControlMenuManager implements Listener {
     }
 
     private ItemStack button(Material material, String name, String lore) {
-        ItemStack item = new ItemStack(material);
-        ItemMeta meta = item.getItemMeta();
-        meta.setDisplayName(name);
-        meta.setLore(java.util.List.of(lore));
-        item.setItemMeta(meta);
-        return item;
+        ItemStack item = new ItemStack(material); ItemMeta meta = item.getItemMeta();
+        meta.setDisplayName(name); meta.setLore(java.util.List.of(lore)); item.setItemMeta(meta); return item;
     }
 }
