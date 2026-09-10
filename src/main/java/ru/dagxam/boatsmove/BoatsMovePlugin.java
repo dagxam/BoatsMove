@@ -17,29 +17,29 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private ShipMovementController movementController; private ShipActivationService activationService; private ShipPersistenceManager persistence;
     private VirtualChestManager storage; private ShipFloodingManager floodingManager; private ShipFloodVisualManager floodVisualManager;
     private ShipProjectileDamageManager projectileDamageManager; private ShipCannonManager cannonManager; private ShipSystemsManager systemsManager;
+    private ShipControlMenuManager controlMenu;
     private int autosaveTask=-1, floodingTask=-1, projectileTask=-1;
 
     @Override public void onEnable() {
         saveDefaultConfig(); shipRegistry=new ShipRegistry();
         displayManager=new ShipDisplayManager(this,Math.max(0,getConfig().getInt("movement.interpolation-ticks",2)));
-        passengerManager=new ShipPassengerManager(this,shipRegistry);
+        double turnSpeed=getConfig().getDouble("movement.turn-speed",2.5);
+        passengerManager=new ShipPassengerManager(this,shipRegistry,turnSpeed);
         getServer().getPluginManager().registerEvents(passengerManager,this);
         movementController=new ShipMovementController(this,shipRegistry,displayManager,passengerManager,
                 getConfig().getDouble("movement.max-speed",.65),getConfig().getDouble("movement.acceleration",.035),
-                getConfig().getDouble("movement.reverse-speed",.28),getConfig().getDouble("movement.turn-speed",2.5),
-                getConfig().getDouble("movement.drag",.90),getConfig().getBoolean("movement.water-only",true));
+                getConfig().getDouble("movement.reverse-speed",.28),turnSpeed,getConfig().getDouble("movement.drag",.90),getConfig().getBoolean("movement.water-only",true));
         activationService=createActivationService(); persistence=new ShipPersistenceManager(this,shipRegistry);
-        Material activationBlock=readMaterial("ships.activation-block",Material.OAK_BUTTON);
-        getServer().getPluginManager().registerEvents(new ShipActivationListener(activationBlock,activationService,passengerManager),this);
+        controlMenu=new ShipControlMenuManager(this,shipRegistry,activationService,passengerManager);
+        getServer().getPluginManager().registerEvents(controlMenu,this); controlMenu.registerRecipe();
         storage=new VirtualChestManager(shipRegistry); getServer().getPluginManager().registerEvents(storage,this);
-        VirtualBlockInteraction interaction=new VirtualBlockInteraction(shipRegistry,storage,passengerManager);
+        VirtualBlockInteraction interaction=new VirtualBlockInteraction(shipRegistry,storage,passengerManager,controlMenu);
         ShipDamageManager damageManager=new ShipDamageManager(shipRegistry,activationService,displayManager); interaction.damageManager(damageManager);
         cannonManager=new ShipCannonManager(this,shipRegistry); interaction.cannonManager(cannonManager);
         getServer().getPluginManager().registerEvents(interaction,this);
         getServer().getPluginManager().registerEvents(new ShipProtectionListener(shipRegistry),this);
         floodingManager=new ShipFloodingManager(shipRegistry,displayManager); movementController.floodingManager(floodingManager);
-        systemsManager=new ShipSystemsManager(ShipSystemsManager.parseMaterials(getConfig().getStringList("systems.engine-blocks")),
-                ShipSystemsManager.parseMaterials(getConfig().getStringList("systems.steering-blocks"))); movementController.systemsManager(systemsManager);
+        systemsManager=new ShipSystemsManager(ShipSystemsManager.parseMaterials(getConfig().getStringList("systems.engine-blocks")),ShipSystemsManager.parseMaterials(getConfig().getStringList("systems.steering-blocks"))); movementController.systemsManager(systemsManager);
         getServer().getPluginManager().registerEvents(new ShipRepairListener(shipRegistry,displayManager,4.0),this);
         floodVisualManager=new ShipFloodVisualManager(this,shipRegistry,floodingManager);
         projectileDamageManager=new ShipProjectileDamageManager(shipRegistry,damageManager,cannonManager);
@@ -47,8 +47,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         for(var ship:shipRegistry.all()) try{displayManager.spawn(ship);}catch(RuntimeException ex){ship.state(ShipState.FAILED);getLogger().warning("Не удалось восстановить корабль "+ship.id()+": "+ex.getMessage());}
         startAutosave(); startFloodingSimulation(); startProjectileSimulation(); movementController.start();
         if(getCommand("boatsmove")!=null)getCommand("boatsmove").setExecutor(this);
-        getLogger().info("BoatsMove enabled. Restored active ships: "+loaded); getLogger().info("Activation block: "+activationBlock);
-        getLogger().info("Systems: engines="+getConfig().getStringList("systems.engine-blocks")+", steering="+getConfig().getStringList("systems.steering-blocks"));
+        getLogger().info("BoatsMove enabled. Restored active ships: "+loaded); getLogger().info("Control block: LECTERN");
     }
     @Override public void onDisable(){if(autosaveTask!=-1)getServer().getScheduler().cancelTask(autosaveTask);if(floodingTask!=-1)getServer().getScheduler().cancelTask(floodingTask);if(projectileTask!=-1)getServer().getScheduler().cancelTask(projectileTask);if(storage!=null)storage.flushAll();if(persistence!=null)persistence.saveAll();if(movementController!=null)movementController.stop();if(passengerManager!=null)passengerManager.clearAll();if(floodVisualManager!=null)floodVisualManager.clearAll();if(displayManager!=null)displayManager.removeAll();if(shipRegistry!=null)shipRegistry.clearRuntimeState();}
     private void startFloodingSimulation(){floodingTask=getServer().getScheduler().runTaskTimer(this,()->{if(floodingManager!=null)floodingManager.tick();if(floodVisualManager!=null)floodVisualManager.tick();},1L,1L).getTaskId();}
