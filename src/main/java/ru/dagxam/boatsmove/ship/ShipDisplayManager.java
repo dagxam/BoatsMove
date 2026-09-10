@@ -6,7 +6,6 @@ import org.bukkit.entity.BlockDisplay;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Transformation;
 import org.joml.Quaternionf;
-import org.joml.Vector3f;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -55,25 +54,31 @@ public final class ShipDisplayManager {
         updatePose(ship, position, yaw, 0f, 0f);
     }
 
-    /** Applies exactly the same rigid quaternion to every block of the ship. */
+    /** Applies one identical rigid rotation to every display. */
     public void updatePose(ShipModel ship, Location position, float yaw, float pitch, float roll) {
         Map<BlockKey, BlockDisplay> map = displays.get(ship.id());
         if (map == null || position == null) return;
-        float relativeYaw = yaw - ship.origin().getYaw();
-        Quaternionf rotation = new Quaternionf()
-                .rotateY((float) Math.toRadians(relativeYaw))
-                .rotateX((float) Math.toRadians(pitch))
-                .rotateZ((float) Math.toRadians(roll));
+        float yawRad = (float) Math.toRadians(yaw - ship.origin().getYaw());
+        float pitchRad = (float) Math.toRadians(pitch);
+        float rollRad = (float) Math.toRadians(roll);
+        Quaternionf rotation = new Quaternionf().rotateY(yawRad).rotateX(pitchRad).rotateZ(rollRad);
+        double cy = Math.cos(yawRad), sy = Math.sin(yawRad);
+        double cp = Math.cos(pitchRad), sp = Math.sin(pitchRad);
+        double cr = Math.cos(rollRad), sr = Math.sin(rollRad);
 
         for (ShipBlock block : ship.blocks()) {
             BlockDisplay display = map.get(new BlockKey(block.x(), block.y(), block.z()));
             if (display == null || !display.isValid()) continue;
-            Vector3f localCenter = new Vector3f(block.x() + 0.5f, block.y() + 0.5f, block.z() + 0.5f);
-            rotation.transformPosition(localCenter);
-            display.teleport(position.clone().add(localCenter.x - 0.5, localCenter.y - 0.5, localCenter.z - 0.5));
+            double x = block.x() + 0.5, y = block.y() + 0.5, z = block.z() + 0.5;
+            double yawX = x * cy - z * sy;
+            double yawZ = x * sy + z * cy;
+            double pitchY = y * cp - yawZ * sp;
+            double pitchZ = y * sp + yawZ * cp;
+            double worldX = yawX * cr - pitchY * sr;
+            double worldY = yawX * sr + pitchY * cr;
+            display.teleport(position.clone().add(worldX - 0.5, worldY - 0.5, pitchZ - 0.5));
             Transformation current = display.getTransformation();
-            display.setTransformation(new Transformation(current.getTranslation(), new Quaternionf(rotation),
-                    current.getScale(), current.getRightRotation()));
+            display.setTransformation(new Transformation(current.getTranslation(), new Quaternionf(rotation), current.getScale(), current.getRightRotation()));
         }
     }
 
