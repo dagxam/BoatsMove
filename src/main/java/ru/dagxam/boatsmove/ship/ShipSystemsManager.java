@@ -20,24 +20,23 @@ public final class ShipSystemsManager {
         this.steeringMaterials = steeringMaterials == null ? Set.of() : Set.copyOf(steeringMaterials);
     }
 
-    public double engineIntegrity(ShipModel ship) {
-        return integrity(ship, engineMaterials, baselineEngines);
-    }
-
-    public double steeringIntegrity(ShipModel ship) {
-        return integrity(ship, steeringMaterials, baselineSteering);
-    }
+    public double engineIntegrity(ShipModel ship) { return integrity(ship, engineMaterials, baselineEngines); }
+    public double steeringIntegrity(ShipModel ship) { return integrity(ship, steeringMaterials, baselineSteering); }
 
     /** A ship with no configured engine blocks keeps legacy propulsion behavior. */
     public double propulsionMultiplier(ShipModel ship) {
-        if (!hasSystem(ship, engineMaterials)) return 1.0;
+        if (engineMaterials.isEmpty()) return 1.0;
+        int current = count(ship, engineMaterials);
+        if (current == 0 && !baselineEngines.containsKey(ship.id())) return 1.0;
         double floodPenalty = 1.0 - Math.max(0.0, ship.flooding()) * 0.55;
         return clamp(engineIntegrity(ship) * floodPenalty, 0.0, 1.0);
     }
 
     /** A ship with no configured steering blocks keeps legacy steering behavior. */
     public double steeringMultiplier(ShipModel ship) {
-        if (!hasSystem(ship, steeringMaterials)) return 1.0;
+        if (steeringMaterials.isEmpty()) return 1.0;
+        int current = count(ship, steeringMaterials);
+        if (current == 0 && !baselineSteering.containsKey(ship.id())) return 1.0;
         double floodPenalty = 1.0 - Math.max(0.0, ship.flooding()) * 0.40;
         return clamp(steeringIntegrity(ship) * floodPenalty, 0.0, 1.0);
     }
@@ -50,26 +49,17 @@ public final class ShipSystemsManager {
     private double integrity(ShipModel ship, Set<Material> materials, Map<UUID, Integer> baselines) {
         if (materials.isEmpty()) return 1.0;
         int current = count(ship, materials);
-        if (current == 0) return baselines.containsKey(ship.id()) ? 0.0 : 1.0;
-        int baseline = baselines.computeIfAbsent(ship.id(), id -> current);
-        return clamp((double) current / Math.max(1, baseline), 0.0, 1.0);
-    }
-
-    private boolean hasSystem(ShipModel ship, Set<Material> materials) {
-        return !materials.isEmpty() && count(ship, materials) > 0;
+        int baseline = baselines.computeIfAbsent(ship.id(), id -> Math.max(1, current));
+        return clamp((double) current / baseline, 0.0, 1.0);
     }
 
     private int count(ShipModel ship, Set<Material> materials) {
         int count = 0;
-        for (ShipBlock block : ship.blocks()) {
-            if (materials.contains(block.data().getMaterial())) count++;
-        }
+        for (ShipBlock block : ship.blocks()) if (materials.contains(block.data().getMaterial())) count++;
         return count;
     }
 
-    private static double clamp(double value, double min, double max) {
-        return Math.max(min, Math.min(max, value));
-    }
+    private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
 
     public static Set<Material> parseMaterials(java.util.List<String> names) {
         if (names == null || names.isEmpty()) return Set.of();
