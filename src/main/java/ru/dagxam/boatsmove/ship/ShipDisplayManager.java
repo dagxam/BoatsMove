@@ -5,7 +5,6 @@ import org.bukkit.World;
 import org.bukkit.entity.BlockDisplay;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Transformation;
-import org.bukkit.util.Vector;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
@@ -18,11 +17,12 @@ import java.util.UUID;
 public final class ShipDisplayManager {
     private final JavaPlugin plugin;
     private final Map<UUID, Map<BlockKey, BlockDisplay>> displays = new HashMap<>();
-    private final int interpolationTicks;
 
     public ShipDisplayManager(JavaPlugin plugin, int interpolationTicks) {
-        this.plugin = plugin;
-        this.interpolationTicks = Math.max(0, interpolationTicks);
+        // A ship is a rigid body. Per-display interpolation makes neighbouring
+        // blocks follow different straight-line paths during rotation and creates
+        // visible gaps. Keep the constructor for config compatibility, but snap
+        // the whole pose every server tick so all block centres stay rigid.
     }
 
     public void spawn(ShipModel ship) {
@@ -33,15 +33,14 @@ public final class ShipDisplayManager {
         Map<BlockKey, BlockDisplay> created = new HashMap<>();
         try {
             for (ShipBlock block : ship.blocks()) {
-                // The entity is placed at the block centre. The -0.5 translation
-                // moves the rendered block back so its rotation pivot is exactly
-                // its centre instead of its lower corner.
+                // Place the entity at the block centre and render the block back
+                // by 0.5. This makes the centre the rotation pivot.
                 Location center = origin.clone().add(block.x() + 0.5, block.y() + 0.5, block.z() + 0.5);
                 BlockDisplay display = world.spawn(center, BlockDisplay.class, entity -> {
                     entity.setBlock(block.blockData().clone());
                     entity.setInterpolationDelay(0);
-                    entity.setInterpolationDuration(interpolationTicks);
-                    entity.setTeleportDuration(interpolationTicks);
+                    entity.setInterpolationDuration(0);
+                    entity.setTeleportDuration(0);
                     entity.setBillboard(org.bukkit.entity.Display.Billboard.FIXED);
                     entity.setTransformation(new Transformation(
                             new Vector3f(-0.5f, -0.5f, -0.5f),
@@ -64,7 +63,7 @@ public final class ShipDisplayManager {
         updatePose(ship, position, yaw, 0f, 0f);
     }
 
-    /** Rotates every block around its own centre while moving every centre by the same ship transform. */
+    /** Applies exactly the same rigid transform to every block centre and rotation. */
     public void updatePose(ShipModel ship, Location position, float yaw, float pitch, float roll) {
         Map<BlockKey, BlockDisplay> map = displays.get(ship.id());
         if (map == null || position == null) return;
@@ -81,20 +80,19 @@ public final class ShipDisplayManager {
             BlockDisplay display = map.get(new BlockKey(block.x(), block.y(), block.z()));
             if (display == null || !display.isValid()) continue;
 
-            // The ship transform is applied to the centre of every block.
-            // Because every display also has a -0.5 local translation, its
-            // geometry rotates around that centre and cannot swing around a corner.
-            Vector3f localCenter = new Vector3f(block.x() + 0.5f, block.y() + 0.5f, block.z() + 0.5f);
-            rotation.transform(localCenter);
-            Location center = position.clone().add(localCenter.x(), localCenter.y(), localCenter.z());
-            display.teleport(center);
+            Vector3f center = new Vector3f(block.x() + 0.5f, block.y() + 0.5f, block.z() + 0.5f);
+            rotation.transform(center);
+            display.teleport(position.clone().add(center.x(), center.y(), center.z()));
 
             Transformation current = display.getTransformation();
             display.setTransformation(new Transformation(
-                    current.getTranslation(),
+                    new Vector3f(-0.5f, -0.5f, -0.5f),
                     new Quaternionf(rotation),
                     current.getScale(),
                     current.getRightRotation()));
+            display.setInterpolationDelay(0);
+            display.setInterpolationDuration(0);
+            display.setTeleportDuration(0);
         }
     }
 
