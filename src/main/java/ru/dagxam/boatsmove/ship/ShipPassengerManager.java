@@ -3,14 +3,18 @@ package ru.dagxam.boatsmove.ship;
 import org.bukkit.Location;
 import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.vehicle.VehicleExitEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Keeps the pilot attached to a logical ship without forcing the player's camera rotation. */
-public final class ShipPassengerManager {
+/** Keeps the pilot attached to an invisible seat without forcing the player's camera rotation. */
+public final class ShipPassengerManager implements Listener {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
     private final Map<UUID, UUID> passengers = new HashMap<>();
@@ -32,7 +36,6 @@ public final class ShipPassengerManager {
             seat.remove();
             return false;
         }
-
         passengers.put(ship.id(), player.getUniqueId());
         seats.put(ship.id(), seat);
         return true;
@@ -50,7 +53,6 @@ public final class ShipPassengerManager {
         Location shipPosition = registry.position(ship);
         double yaw = Math.toRadians(ship.yaw());
         Location exit = shipPosition.clone().add(-1.5 * Math.sin(yaw), 1.0, 1.5 * Math.cos(yaw));
-        // Preserve the player's current camera direction when leaving the seat.
         exit.setYaw(player.getYaw());
         exit.setPitch(player.getPitch());
         player.teleport(exit);
@@ -64,7 +66,7 @@ public final class ShipPassengerManager {
         return ship == null ? null : passengers.get(ship.id());
     }
 
-    /** Moves only the invisible seat. The player's camera remains fully client-controlled. */
+    /** Keeps the seat attached to the ship; the player camera is never teleported. */
     public boolean tick(ShipModel ship) {
         if (ship == null || !hasPassenger(ship)) return false;
         UUID playerId = passengers.get(ship.id());
@@ -79,26 +81,56 @@ public final class ShipPassengerManager {
             dismountSilently(ship);
             return false;
         }
-
-        // Shift can remove the player from the mount before this tick reaches us.
-        if (player.isSneaking() || seat == null || !seat.isValid() || !seat.getPassengers().contains(player)) {
+        if (player.isSneaking()) {
             dismount(ship);
+            return false;
+        }
+        if (seat == null || !seat.isValid()) {
+            clear(ship);
+            return false;
+        }
+        if (!seat.getPassengers().contains(player)) {
+            // Minecraft may already have processed the vehicle exit. Treat it
+            // as a real dismount instead of leaving a stale pilot behind.
+            removeSeat(ship);
             return false;
         }
 
         Location target = seatLocation(ship);
-        if (seat.getWorld() != target.getWorld()
-                || seat.getLocation().distanceSquared(target) > 1.0E-6) {
-            seat.teleport(target);
-        }
+        seat.teleport(target);
         return true;
+    }
+
+    @EventHandler(priority = EventPriority.MONITOR)
+    public void onVehicleExit(VehicleExitEvent event) {
+        if (!(event.getVehicle() instanceof ArmorStand seat)) return;
+        UUID shipId = null;
+        for (Map.Entry<UUID, ArmorStand> entry : seats.entrySet()) {
+            if (entry.getValue() == seat) {
+                shipId = entry.getKey();
+                break;
+            }
+        }
+        if (shipId == null) return;
+
+        passengers.remove(shipId);
+        seats.remove(shipId);
+        if (seat.isValid()) seat.remove();
+
+        ShipModel ship = registry.get(shipId);
+        if (ship != null) {
+            ShipRuntimeState runtime = registry.runtime(ship.id());
+            if (runtime != null) {
+                runtime.speed(0.0);
+                runtime.verticalSpeed(0.0);
+            }
+        }
     }
 
     public void clear(ShipModel ship) {
         if (ship == null) return;
         passengers.remove(ship.id());
-        ArmorStand seat = seats.remove(ship.id());
-        if (seat != null && seat.isValid()) seat.remove();
+        removeSeat(ship);
     }
 
     public void clearAll() {
@@ -131,9 +163,13 @@ public final class ShipPassengerManager {
         return shipPosition.clone().add(worldX, offsetY, worldZ);
     }
 
-    private void dismountSilently(ShipModel ship) {
-        passengers.remove(ship.id());
+    private void removeSeat(ShipModel ship) {
         ArmorStand seat = seats.remove(ship.id());
         if (seat != null && seat.isValid()) seat.remove();
+    }
+
+    private void dismountSilently(ShipModel ship) {
+        passengers.remove(ship.id());
+        removeSeat(ship);
     }
 }
