@@ -23,6 +23,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         saveDefaultConfig(); shipRegistry=new ShipRegistry();
         displayManager=new ShipDisplayManager(this,Math.max(0,getConfig().getInt("movement.interpolation-ticks",2)));
         passengerManager=new ShipPassengerManager(this,shipRegistry);
+        getServer().getPluginManager().registerEvents(passengerManager,this);
         movementController=new ShipMovementController(this,shipRegistry,displayManager,passengerManager,
                 getConfig().getDouble("movement.max-speed",.65),getConfig().getDouble("movement.acceleration",.035),
                 getConfig().getDouble("movement.reverse-speed",.28),getConfig().getDouble("movement.turn-speed",2.5),
