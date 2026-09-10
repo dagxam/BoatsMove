@@ -17,7 +17,7 @@ public final class ShipRepairListener implements Listener {
     public ShipRepairListener(ShipRegistry registry, ShipDisplayManager displays, double maxBlockDistance) {
         this.registry = registry;
         this.displays = displays;
-        this.maxBlockDistanceSquared = Math.max(4.0, maxBlockDistance * maxDistance);
+        this.maxBlockDistanceSquared = Math.max(4.0, maxBlockDistance * maxBlockDistance);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
