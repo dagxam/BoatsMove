@@ -8,10 +8,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/**
- * Keeps passengers attached to a logical ship without turning the ship into a
- * vanilla Boat entity. The ship remains the source of truth.
- */
+/** Keeps the pilot attached to a logical ship without a vanilla Boat entity. */
 public final class ShipPassengerManager {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
@@ -29,8 +26,6 @@ public final class ShipPassengerManager {
         if (passengers.containsKey(ship.id())) return false;
 
         passengers.put(ship.id(), player.getUniqueId());
-        // Seat is relative to the ship anchor. It is intentionally not stored
-        // in the visual display layer.
         seatOffsets.put(ship.id(), new Location(null, 0.5, 1.15, 0.5));
         movePassenger(ship);
         return true;
@@ -57,23 +52,25 @@ public final class ShipPassengerManager {
         return ship == null ? null : passengers.get(ship.id());
     }
 
-    /** Call once per movement tick to keep the logical passenger seated. */
-    public void tick(ShipModel ship) {
-        if (ship == null || !hasPassenger(ship)) return;
-        Player player = plugin.getServer().getPlayer(passengers.get(ship.id()));
+    /** Keeps the pilot seated and returns whether control is still active. */
+    public boolean tick(ShipModel ship) {
+        if (ship == null || !hasPassenger(ship)) return false;
+        UUID playerId = passengers.get(ship.id());
+        Player player = plugin.getServer().getPlayer(playerId);
         if (player == null || !player.isOnline()) {
-            dismountSilently(ship);
-            return;
+            clear(ship);
+            return false;
         }
         if (player.getCurrentInput().isSneak()) {
             dismount(ship);
-            return;
+            return false;
         }
         if (!player.getWorld().getUID().equals(ship.worldId())) {
             dismountSilently(ship);
-            return;
+            return false;
         }
         movePassenger(ship);
+        return true;
     }
 
     public void clear(ShipModel ship) {
@@ -95,7 +92,10 @@ public final class ShipPassengerManager {
 
         Location shipPosition = registry.position(ship);
         Location offset = seatOffsets.getOrDefault(ship.id(), new Location(null, 0.5, 1.15, 0.5));
-        Location seat = shipPosition.clone().add(offset.getX(), offset.getY(), offset.getZ());
+        double yaw = Math.toRadians(ship.yaw());
+        double worldX = offset.getX() * Math.cos(yaw) - offset.getZ() * Math.sin(yaw);
+        double worldZ = offset.getX() * Math.sin(yaw) + offset.getZ() * Math.cos(yaw);
+        Location seat = shipPosition.clone().add(worldX, offset.getY(), worldZ);
         seat.setYaw(ship.yaw());
         seat.setPitch(0);
         player.teleport(seat);
