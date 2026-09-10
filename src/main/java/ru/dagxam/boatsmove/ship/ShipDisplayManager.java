@@ -61,7 +61,15 @@ public final class ShipDisplayManager {
         float yawRad = (float) Math.toRadians(yaw - ship.origin().getYaw());
         float pitchRad = (float) Math.toRadians(pitch);
         float rollRad = (float) Math.toRadians(roll);
-        Quaternionf rotation = new Quaternionf().rotateY(yawRad).rotateX(pitchRad).rotateZ(rollRad);
+
+        // JOML composes these rotations by quaternion multiplication. Build the
+        // quaternion in reverse order so its vector transform is exactly the
+        // same Y -> X -> Z order used below for block positions.
+        Quaternionf rotation = new Quaternionf()
+                .rotateZ(rollRad)
+                .rotateX(pitchRad)
+                .rotateY(yawRad);
+
         double cy = Math.cos(yawRad), sy = Math.sin(yawRad);
         double cp = Math.cos(pitchRad), sp = Math.sin(pitchRad);
         double cr = Math.cos(rollRad), sr = Math.sin(rollRad);
@@ -69,16 +77,30 @@ public final class ShipDisplayManager {
         for (ShipBlock block : ship.blocks()) {
             BlockDisplay display = map.get(new BlockKey(block.x(), block.y(), block.z()));
             if (display == null || !display.isValid()) continue;
-            double x = block.x() + 0.5, y = block.y() + 0.5, z = block.z() + 0.5;
+
+            // Rotate the block centre around the same ship origin used by the
+            // display entities, then convert the centre back to the entity's
+            // block-corner position. This keeps neighbouring blocks locked
+            // together instead of rotating around their own separate pivots.
+            double x = block.x() + 0.5;
+            double y = block.y() + 0.5;
+            double z = block.z() + 0.5;
+
+            // Yaw -> pitch -> roll, matching the quaternion above.
             double yawX = x * cy - z * sy;
             double yawZ = x * sy + z * cy;
             double pitchY = y * cp - yawZ * sp;
             double pitchZ = y * sp + yawZ * cp;
             double worldX = yawX * cr - pitchY * sr;
             double worldY = yawX * sr + pitchY * cr;
+
             display.teleport(position.clone().add(worldX - 0.5, worldY - 0.5, pitchZ - 0.5));
             Transformation current = display.getTransformation();
-            display.setTransformation(new Transformation(current.getTranslation(), new Quaternionf(rotation), current.getScale(), current.getRightRotation()));
+            display.setTransformation(new Transformation(
+                    current.getTranslation(),
+                    new Quaternionf(rotation),
+                    current.getScale(),
+                    current.getRightRotation()));
         }
     }
 
