@@ -8,7 +8,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Vector;
 
-/** Boat-like movement controller with multi-point buoyancy and full-hull collision. */
+/** Boat-like movement controller with multi-point buoyancy, collision and damaged systems. */
 public final class ShipMovementController {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
@@ -18,6 +18,7 @@ public final class ShipMovementController {
     private final double maxSpeed, acceleration, reverseSpeed, turnSpeed, drag;
     private final boolean waterOnly;
     private ShipFloodingManager floodingManager;
+    private ShipSystemsManager systemsManager;
     private final double buoyancyStrength = 0.12;
     private final double verticalDamping = 0.70;
     private final double maxVerticalStep = 0.10;
@@ -42,6 +43,7 @@ public final class ShipMovementController {
     }
 
     public void floodingManager(ShipFloodingManager floodingManager) { this.floodingManager = floodingManager; }
+    public void systemsManager(ShipSystemsManager systemsManager) { this.systemsManager = systemsManager; }
 
     public void start() {
         if (taskId != -1) return;
@@ -52,6 +54,7 @@ public final class ShipMovementController {
 
     public void remove(ShipModel ship) {
         passengers.clear(ship);
+        if (systemsManager != null) systemsManager.forget(ship);
         registry.removeRuntime(ship.id());
     }
 
@@ -91,21 +94,32 @@ public final class ShipMovementController {
                     : floodingManager.buoyancyState(ship);
             double floodedMass = clamp(Math.max(ship.flooding(), flood.floodedFraction()), 0.0, 1.0);
             double controlMultiplier = clamp(1.0 - floodedMass * 0.70, 0.30, 1.0);
+            double steeringMultiplier = systemsManager == null ? 1.0 : systemsManager.steeringMultiplier(ship);
+            double propulsionMultiplier = systemsManager == null ? 1.0 : systemsManager.propulsionMultiplier(ship);
+            controlMultiplier *= steeringMultiplier;
+
             if (input.isLeft()) ship.yaw(ship.yaw() - (float) (turnSpeed * controlMultiplier));
             if (input.isRight()) ship.yaw(ship.yaw() + (float) (turnSpeed * controlMultiplier));
 
             double classSpeed = ship.shipClass().speedMultiplier();
             double floodSpeed = Math.max(0.18, 1.0 - floodedMass * 0.72);
             double terrainMultiplier = (water.shallow ? shallowSpeedMultiplier : 1.0) * classSpeed * floodSpeed;
-            double forwardLimit = maxSpeed * terrainMultiplier;
-            double reverseLimit = reverseSpeed * terrainMultiplier;
-            if (input.isForward()) speed = Math.min(forwardLimit, speed + acceleration * terrainMultiplier);
-            else if (input.isBackward()) speed = Math.max(-reverseLimit, speed - acceleration * terrainMultiplier);
-            else {
+            double forwardLimit = maxSpeed * terrainMultiplier * propulsionMultiplier;
+            double reverseLimit = reverseSpeed * terrainMultiplier * propulsionMultiplier;
+            if (propulsionMultiplier <= 0.001) {
+                speed *= drag;
+                if (Math.abs(speed) < 0.001) speed = 0.0;
+            } else if (input.isForward()) {
+                speed = Math.min(forwardLimit, speed + acceleration * terrainMultiplier * propulsionMultiplier);
+            } else if (input.isBackward()) {
+                speed = Math.max(-reverseLimit, speed - acceleration * terrainMultiplier * propulsionMultiplier);
+            } else {
                 speed *= drag;
                 if (Math.abs(speed) < 0.001) speed = 0.0;
             }
 
+            // Damaged engines cannot sustain existing momentum indefinitely.
+            if (propulsionMultiplier < 0.999) speed *= 0.985 + propulsionMultiplier * 0.015;
             runtime.speed(speed);
             if (Math.abs(speed) >= 0.0001) {
                 Vector direction = new Vector(-Math.sin(Math.toRadians(ship.yaw())), 0,
@@ -146,10 +160,6 @@ public final class ShipMovementController {
                 ? new ShipFloodingManager.BuoyancyState(ship.flooding(), 0.0, 0.0)
                 : floodingManager.buoyancyState(ship);
         double floodedMass = clamp(Math.max(ship.flooding(), flood.floodedFraction()), 0.0, 1.0);
-
-        // Approximate Archimedean draft: dry hull mass + actual flooded volume must
-        // be supported by displaced water. The class multiplier represents hull
-        // buoyancy/shape, while footprint is the effective water-plane area.
         double dryMass = ship.blockCount() * 0.62;
         double estimatedInternalVolume = Math.max(1.0, ship.blockCount() * 0.30);
         double floodMass = estimatedInternalVolume * floodedMass * 0.95;
@@ -159,9 +169,6 @@ public final class ShipMovementController {
 
         double immersion = clamp((water.averageSurface - bottom) / height, 0.0, 1.0);
         double targetBottom = water.averageSurface - desiredDraft;
-
-        // Once the flooded volume approaches the available internal volume, buoyancy
-        // collapses progressively instead of abruptly teleporting the ship downward.
         double critical = clamp((floodedMass - 0.72) / 0.28, 0.0, 1.0);
         double sinkDepth = height * (0.50 * critical * critical);
         targetBottom -= sinkDepth;
@@ -171,10 +178,7 @@ public final class ShipMovementController {
         vertical *= verticalDamping;
         vertical = clamp(vertical, -maxVerticalStep, maxVerticalStep);
         if (Math.abs(error) < 0.02) vertical *= 0.45;
-        if (critical > 0.0) {
-            double forcedSink = -0.010 - critical * 0.075;
-            vertical = Math.min(vertical, forcedSink);
-        }
+        if (critical > 0.0) vertical = Math.min(vertical, -0.010 - critical * 0.075);
         runtime.verticalSpeed(vertical);
         runtime.position(pos.clone().add(0, vertical, 0));
 
@@ -184,7 +188,6 @@ public final class ShipMovementController {
         double right = water.rightSurface - water.averageSurface;
         float targetPitch = (float) clamp((front - rear) * -4.5, -maxTilt, maxTilt);
         float targetRoll = (float) clamp((right - left) * 4.5, -maxTilt, maxTilt);
-
         targetPitch += (float) ((ship.floodRear() - ship.floodFront()) * 5.0);
         targetRoll += (float) ((ship.floodRight() - ship.floodLeft()) * 5.0);
         targetRoll += (float) (flood.lateralCenter() * floodedMass * 4.0);
@@ -193,8 +196,6 @@ public final class ShipMovementController {
         targetRoll = (float) clamp(targetRoll, -maxTilt, maxTilt);
         runtime.pitch(approach(runtime.pitch(), targetPitch, 0.18f));
         runtime.roll(approach(runtime.roll(), targetRoll, 0.18f));
-
-        // A very shallow water layer should not make the hull oscillate vertically.
         if (immersion < 0.05 && floodedMass < 0.10) runtime.verticalSpeed(runtime.verticalSpeed() * 0.80);
     }
 
@@ -209,20 +210,12 @@ public final class ShipMovementController {
             minZ = Math.min(minZ, b.z()); maxZ = Math.max(maxZ, b.z());
             minY = Math.min(minY, b.y()); maxY = Math.max(maxY, b.y());
         }
-
-        double[][] points = {
-                {(minX + maxX) * 0.5, minZ},
-                {(minX + maxX) * 0.5, maxZ},
-                {minX, (minZ + maxZ) * 0.5},
-                {maxX, (minZ + maxZ) * 0.5},
-                {(minX + maxX) * 0.5, (minZ + maxZ) * 0.5}
-        };
-        double[] surfaces = new double[5];
-        boolean[] valid = new boolean[5];
-        int count = 0;
+        double[][] points = {{(minX + maxX) * 0.5, minZ}, {(minX + maxX) * 0.5, maxZ},
+                {minX, (minZ + maxZ) * 0.5}, {maxX, (minZ + maxZ) * 0.5},
+                {(minX + maxX) * 0.5, (minZ + maxZ) * 0.5}};
+        double[] surfaces = new double[5]; boolean[] valid = new boolean[5]; int count = 0;
         for (int i = 0; i < points.length; i++) {
-            double wx = position.getX() + points[i][0];
-            double wz = position.getZ() + points[i][1];
+            double wx = position.getX() + points[i][0], wz = position.getZ() + points[i][1];
             int x = (int) Math.floor(wx), z = (int) Math.floor(wz);
             if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
             double surface = findSurface(world, x, z, (int) Math.floor(position.getY() + minY) - 2,
@@ -233,30 +226,21 @@ public final class ShipMovementController {
         double average = 0;
         for (int i = 0; i < surfaces.length; i++) if (valid[i]) average += surfaces[i];
         average /= count;
-        double front = valid[0] ? surfaces[0] : average;
-        double rear = valid[1] ? surfaces[1] : average;
-        double left = valid[2] ? surfaces[2] : average;
-        double right = valid[3] ? surfaces[3] : average;
-        return new WaterState(count, average, front, rear, left, right,
-                isShallow(world, position, minX, maxX, minZ, maxZ));
+        double front = valid[0] ? surfaces[0] : average, rear = valid[1] ? surfaces[1] : average;
+        double left = valid[2] ? surfaces[2] : average, right = valid[3] ? surfaces[3] : average;
+        return new WaterState(count, average, front, rear, left, right, isShallow(world, position, minX, maxX, minZ, maxZ));
     }
 
     private double findSurface(World world, int x, int z, int minY, int maxY) {
-        for (int y = maxY; y >= minY; y--) {
-            Material type = world.getBlockAt(x, y, z).getType();
-            if (type == Material.WATER) return y + 1.0;
-        }
+        for (int y = maxY; y >= minY; y--) if (world.getBlockAt(x, y, z).getType() == Material.WATER) return y + 1.0;
         return Double.NaN;
     }
 
     private boolean isShallow(World world, Location pos, int minX, int maxX, int minZ, int maxZ) {
         int y = (int) Math.floor(pos.getY());
-        for (int x = minX; x <= maxX; x += Math.max(1, (maxX - minX) / 3)) {
-            for (int z = minZ; z <= maxZ; z += Math.max(1, (maxZ - minZ) / 3)) {
-                int wx = (int) Math.floor(pos.getX() + x), wz = (int) Math.floor(pos.getZ() + z);
-                if (world.getBlockAt(wx, y - 2, wz).getType().isSolid()) return true;
-            }
-        }
+        for (int x = minX; x <= maxX; x += Math.max(1, (maxX - minX) / 3))
+            for (int z = minZ; z <= maxZ; z += Math.max(1, (maxZ - minZ) / 3))
+                if (world.getBlockAt((int) Math.floor(pos.getX() + x), y - 2, (int) Math.floor(pos.getZ() + z)).getType().isSolid()) return true;
         return false;
     }
 
