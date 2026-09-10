@@ -38,9 +38,13 @@ public final class ShipActivationListener implements Listener {
                 : result.message());
 
         if (result.success() && result.ship() != null) {
+            // The direction the player was looking at activation becomes the
+            // ship's initial heading. This removes the old fixed-world-Z bias.
+            result.ship().originYaw(player.getYaw());
+            result.ship().yaw(player.getYaw());
             passengerManager.board(result.ship(), player);
             player.sendMessage(org.bukkit.ChatColor.AQUA +
-                    "Вы заняли место управления. W/S — движение, A/D — поворот, Shift — выйти.");
+                    "Управление: мышь — поворот, W — вперёд, S — назад, Shift — выйти.");
         }
     }
 }
