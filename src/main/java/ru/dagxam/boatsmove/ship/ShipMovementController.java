@@ -105,9 +105,6 @@ public final class ShipMovementController {
             double propulsionMultiplier = systemsManager == null ? 1.0 : systemsManager.propulsionMultiplier(ship);
             controlMultiplier *= steeringMultiplier;
 
-            if (input.isLeft()) ship.yaw(ship.yaw() - (float) (turnSpeed * controlMultiplier));
-            if (input.isRight()) ship.yaw(ship.yaw() + (float) (turnSpeed * controlMultiplier));
-
             double classSpeed = ship.shipClass().speedMultiplier();
             double floodSpeed = Math.max(0.18, 1.0 - floodedMass * 0.72);
             double terrainMultiplier = (water.shallow ? shallowSpeedMultiplier : 1.0) * classSpeed * floodSpeed;
@@ -154,11 +151,10 @@ public final class ShipMovementController {
         return pilot;
     }
 
-    /** W is the ship's forward input and S is its exact opposite. */
+    /** Minecraft yaw 0 faces +Z; this is the ship's visual forward direction. */
     private Vector forwardDirection(float yaw) {
         double radians = Math.toRadians(yaw);
-        // Invert the previous vector: the user-facing W/S controls were reversed.
-        return new Vector(Math.sin(radians), 0, -Math.cos(radians));
+        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
     }
 
     private void applyBuoyancy(ShipModel ship, ShipRuntimeState runtime, WaterState water) {
