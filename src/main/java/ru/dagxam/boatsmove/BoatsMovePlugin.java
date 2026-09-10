@@ -20,6 +20,7 @@ import ru.dagxam.boatsmove.ship.ShipPersistenceManager;
 import ru.dagxam.boatsmove.ship.ShipProjectileDamageManager;
 import ru.dagxam.boatsmove.ship.ShipProtectionListener;
 import ru.dagxam.boatsmove.ship.ShipRegistry;
+import ru.dagxam.boatsmove.ship.ShipSystemsManager;
 import ru.dagxam.boatsmove.ship.VirtualBlockInteraction;
 import ru.dagxam.boatsmove.ship.VirtualChestManager;
 
@@ -38,6 +39,7 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
     private ShipFloodVisualManager floodVisualManager;
     private ShipProjectileDamageManager projectileDamageManager;
     private ShipCannonManager cannonManager;
+    private ShipSystemsManager systemsManager;
     private int autosaveTask = -1;
     private int floodingTask = -1;
     private int projectileTask = -1;
@@ -68,6 +70,10 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
 
         this.floodingManager = new ShipFloodingManager(shipRegistry, displayManager);
         this.movementController.floodingManager(floodingManager);
+        this.systemsManager = new ShipSystemsManager(
+                ShipSystemsManager.parseMaterials(getConfig().getStringList("systems.engine-blocks")),
+                ShipSystemsManager.parseMaterials(getConfig().getStringList("systems.steering-blocks")));
+        this.movementController.systemsManager(systemsManager);
         this.floodVisualManager = new ShipFloodVisualManager(this, shipRegistry, floodingManager);
         this.projectileDamageManager = new ShipProjectileDamageManager(shipRegistry, damageManager, cannonManager);
 
@@ -83,6 +89,8 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         if (getCommand("boatsmove") != null) getCommand("boatsmove").setExecutor(this);
         getLogger().info("BoatsMove enabled. Restored active ships: " + loaded);
         getLogger().info("Activation block: " + activationBlock);
+        getLogger().info("Systems: engines=" + getConfig().getStringList("systems.engine-blocks")
+                + ", steering=" + getConfig().getStringList("systems.steering-blocks"));
     }
 
     @Override
