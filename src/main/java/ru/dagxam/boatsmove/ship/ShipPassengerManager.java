@@ -17,16 +17,24 @@ import java.util.UUID;
 public final class ShipPassengerManager implements Listener {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
+    private final ShipActivationService activationService;
     private final double turnSpeed;
     private final Map<UUID, UUID> passengers = new HashMap<>();
     private final Map<UUID, ArmorStand> seats = new HashMap<>();
     private final Map<UUID, SeatAnchor> anchors = new HashMap<>();
 
     public ShipPassengerManager(JavaPlugin plugin, ShipRegistry registry, double turnSpeed) {
+        this(plugin, registry, null, turnSpeed);
+    }
+
+    public ShipPassengerManager(JavaPlugin plugin, ShipRegistry registry, ShipActivationService activationService, double turnSpeed) {
         this.plugin = plugin;
         this.registry = registry;
+        this.activationService = activationService;
         this.turnSpeed = Math.max(0.01, turnSpeed);
     }
+
+    public void activationService(ShipActivationService activationService) { }
 
     public boolean board(ShipModel ship, Player player) {
         if (ship == null || player == null || ship.state() != ShipState.ACTIVE) return false;
@@ -82,7 +90,10 @@ public final class ShipPassengerManager implements Listener {
         Player player = plugin.getServer().getPlayer(playerId);
         if (player == null || !player.isOnline()) { clear(ship); return false; }
         if (!player.getWorld().getUID().equals(ship.worldId())) { dismountSilently(ship); return false; }
-        if (player.isSneaking()) { dismount(ship); return false; }
+        if (player.isSneaking()) {
+            requestDeactivation(ship);
+            return false;
+        }
         org.bukkit.Input input = player.getCurrentInput();
         if (input.isLeft()) ship.yaw((float) (ship.yaw() - turnSpeed));
         if (input.isRight()) ship.yaw((float) (ship.yaw() + turnSpeed));
@@ -98,11 +109,25 @@ public final class ShipPassengerManager implements Listener {
         SeatAnchor anchor = anchors.get(ship.id());
         if (player == null || !player.isOnline()) { clear(ship); return false; }
         if (!player.getWorld().getUID().equals(ship.worldId())) { dismountSilently(ship); return false; }
-        if (player.isSneaking()) { dismount(ship); return false; }
+        if (player.isSneaking()) { requestDeactivation(ship); return false; }
         if (seat == null || !seat.isValid() || anchor == null) { clear(ship); return false; }
         if (!seat.getPassengers().contains(player)) { removeSeat(ship); return false; }
         seat.teleport(seatLocation(ship, anchor));
         return true;
+    }
+
+    private void requestDeactivation(ShipModel ship) {
+        // Deactivation is performed synchronously on the server tick. We release
+        // the passenger only after the activation service has safely restored the hull.
+        if (activationService == null) {
+            dismount(ship);
+            return;
+        }
+        ShipActivationService.Result result = activationService.deactivate(ship);
+        if (!result.success()) {
+            Player player = plugin.getServer().getPlayer(passengerId(ship));
+            if (player != null && player.isOnline()) player.sendMessage(result.message());
+        }
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -173,8 +198,6 @@ public final class ShipPassengerManager implements Listener {
         }
         if (best == null) return new SeatAnchor(localX, localY, localZ);
 
-        // Clamp to the upper face of the selected block. The player is never
-        // allowed to drift to the block centre or to another side of the hull.
         double anchoredX = best.x() + 0.5 + clamp(localX - (best.x() + 0.5), -0.49, 0.49);
         double anchoredZ = best.z() + 0.5 + clamp(localZ - (best.z() + 0.5), -0.49, 0.49);
         double anchoredY = best.y() + 1.02;
