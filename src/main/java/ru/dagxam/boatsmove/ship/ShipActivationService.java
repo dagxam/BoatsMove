@@ -17,16 +17,18 @@ public final class ShipActivationService {
     private final ShipRegistry registry;
     private final ShipStructureScanner scanner = new ShipStructureScanner();
     private final ShipDisplayManager displayManager;
+    private final ShipPassengerManager passengerManager;
     private final int minBlocks;
     private final int maxBlocks;
     private final Set<Material> forbidden;
     private final int maxActiveShips;
 
     public ShipActivationService(ShipRegistry registry, ShipDisplayManager displayManager,
-                                 int minBlocks, int maxBlocks, Set<Material> forbidden,
-                                 int maxActiveShips) {
+                                 ShipPassengerManager passengerManager, int minBlocks, int maxBlocks,
+                                 Set<Material> forbidden, int maxActiveShips) {
         this.registry = registry;
         this.displayManager = displayManager;
+        this.passengerManager = passengerManager;
         this.minBlocks = minBlocks;
         this.maxBlocks = maxBlocks;
         this.forbidden = Set.copyOf(forbidden);
@@ -84,7 +86,7 @@ public final class ShipActivationService {
         World world = displayWorld(ship);
         if (world == null) return Result.failure("Мир корабля не найден.");
 
-        int quarterTurns = nearestQuarterTurn(ship, runtime);
+        int quarterTurns = nearestQuarterTurn(ship);
         org.bukkit.Location current = runtime.position();
         org.bukkit.Location restoreOrigin = current.clone();
         restoreOrigin.setX(Math.rint(current.getX()));
@@ -98,6 +100,11 @@ public final class ShipActivationService {
         }
 
         ship.state(ShipState.DEACTIVATING);
+        // Release the pilot before materializing the real blocks. His current
+        // location is the saved boarding side; teleporting him to ship center
+        // can put him inside the restored hull and make movement impossible.
+        if (passengerManager != null) passengerManager.releaseForDeactivation(ship);
+
         VirtualChestManager storage = registry.storageManager();
         try {
             if (storage != null) {
@@ -117,8 +124,9 @@ public final class ShipActivationService {
         }
     }
 
-    private int nearestQuarterTurn(ShipModel ship, ShipRuntimeState runtime) {
-        float relative = normalizeYaw(runtime.position().getYaw() - ship.origin().getYaw());
+    /** Uses the ship's logical yaw, not the runtime Location yaw, which is not kept in sync with mouse steering. */
+    private int nearestQuarterTurn(ShipModel ship) {
+        float relative = normalizeYaw(ship.yaw() - ship.origin().getYaw());
         return Math.floorMod(Math.round(relative / 90.0f), 4);
     }
 
