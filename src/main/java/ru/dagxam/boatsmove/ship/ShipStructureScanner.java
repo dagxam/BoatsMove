@@ -17,7 +17,7 @@ import java.util.UUID;
 
 /** Finds a connected ship structure without modifying the world. */
 public final class ShipStructureScanner {
-    // A ship can connect by face, edge or corner. This supports structures
+    // A ship can now connect by face, edge or corner. This supports structures
     // such as diagonal stair/beam chains while still requiring actual block contact.
     private static final int[][] NEIGHBORS = buildNeighbors();
 
@@ -85,15 +85,13 @@ public final class ShipStructureScanner {
 
     /**
      * Only real construction blocks participate in the ship flood-fill.
-     * Liquids and other non-solid world blocks must never connect a ship to
-     * the terrain below it.
+     * Paper 26.2 Material does not expose isLiquid(), so liquids are checked
+     * explicitly. This prevents the scan from reaching terrain through water.
      */
     private boolean isShipBlock(Material type) {
         if (type == null || type.isAir()) return false;
-        if (type.isLiquid()) return false;
-        if (type == Material.BUBBLE_COLUMN) return false;
         return switch (type) {
-            case KELP, KELP_PLANT, SEAGRASS, TALL_SEAGRASS -> false;
+            case WATER, LAVA, BUBBLE_COLUMN, KELP, KELP_PLANT, SEAGRASS, TALL_SEAGRASS -> false;
             default -> true;
         };
     }
@@ -117,7 +115,7 @@ public final class ShipStructureScanner {
     }
 
     public record Result(boolean success, String error, ShipSnapshot snapshot) {
-        public static Result success(ShipSnapshot snapshot) { return new Result(true, null, snapshot); }
+        public static Result success(ShipSnapshot snapshot) { return new Result(true, null, null == null ? null : snapshot); }
         public static Result failure(String error) { return new Result(false, error, null); }
     }
 }
