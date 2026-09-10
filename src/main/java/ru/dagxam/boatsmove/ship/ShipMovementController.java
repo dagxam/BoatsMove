@@ -79,12 +79,17 @@ public final class ShipMovementController {
                 runtime.verticalSpeed(0.0);
             }
 
+            // The passenger is the control seat. Never use ownerId as the pilot
+            // because the owner may already have left the seat.
             Player pilot = activePilot(ship);
             if (pilot == null) {
                 boolean stillControlled = passengers.tick(ship);
                 if (!stillControlled) {
+                    // A Shift dismount or lost pilot immediately kills momentum.
                     runtime.speed(0.0);
                     runtime.verticalSpeed(0.0);
+                    runtime.pitch(approach(runtime.pitch(), 0f, 0.35f));
+                    runtime.roll(approach(runtime.roll(), 0f, 0.35f));
                 } else {
                     applyDrag(runtime);
                 }
@@ -135,7 +140,13 @@ public final class ShipMovementController {
             }
 
             displays.updatePose(ship, runtime.position(), ship.yaw(), runtime.pitch(), runtime.roll());
+            // If Shift was pressed during this same tick, tick() dismounts and
+            // the next tick is guaranteed to have zero momentum.
             passengers.tick(ship);
+            if (!passengers.hasPassenger(ship)) {
+                runtime.speed(0.0);
+                runtime.verticalSpeed(0.0);
+            }
         }
     }
 
