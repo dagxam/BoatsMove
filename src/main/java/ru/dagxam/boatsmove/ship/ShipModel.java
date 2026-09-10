@@ -67,11 +67,6 @@ public final class ShipModel {
     public double floodLeft() { return floodLeft; }
     public double floodRight() { return floodRight; }
 
-    /**
-     * Updates the observed external water distribution while retaining a slowly decaying
-     * directional breach pressure. This prevents a hull breach from losing its directional
-     * effect merely because the external-water sample changes for a tick.
-     */
     public void floodSides(double front, double rear, double left, double right) {
         floodFront = combineFloodSide(floodFront, front);
         floodRear = combineFloodSide(floodRear, rear);
@@ -79,7 +74,6 @@ public final class ShipModel {
         floodRight = combineFloodSide(floodRight, right);
     }
 
-    /** Adds a persistent impulse for a newly created hull breach. */
     public void addFloodSidePressure(double front, double rear, double left, double right) {
         floodFront = Math.max(floodFront, clamp01(front));
         floodRear = Math.max(floodRear, clamp01(rear));
@@ -87,7 +81,6 @@ public final class ShipModel {
         floodRight = Math.max(floodRight, clamp01(right));
     }
 
-    /** Clears directional pressure when the flooding subsystem has no compartments left. */
     public void clearFloodSides() {
         floodFront = 0.0;
         floodRear = 0.0;
@@ -114,7 +107,16 @@ public final class ShipModel {
         flooding(Math.min(flooding, 1.0 - health / maxHealth));
     }
 
-    /** Removes exactly one logical block identified by its immutable local coordinates. */
+    /** Adds a repaired block at an unused local coordinate. */
+    public boolean addBlock(ShipBlock block) {
+        if (block == null || containsBlock(block.x(), block.y(), block.z())) return false;
+        blocks.add(block);
+        shipClass = ShipClass.fromBlockCount(blocks.size());
+        maxHealth += 2.0;
+        health = Math.min(maxHealth, health + 2.0);
+        return true;
+    }
+
     public Optional<ShipBlock> removeBlock(int x, int y, int z) {
         for (int i = 0; i < blocks.size(); i++) {
             ShipBlock block = blocks.get(i);
