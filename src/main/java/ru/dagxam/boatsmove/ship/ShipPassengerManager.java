@@ -24,7 +24,6 @@ public final class ShipPassengerManager {
         if (ship == null || player == null || ship.state() != ShipState.ACTIVE) return false;
         if (!player.getWorld().getUID().equals(ship.worldId())) return false;
         if (passengers.containsKey(ship.id())) return false;
-
         passengers.put(ship.id(), player.getUniqueId());
         seatOffsets.put(ship.id(), new Location(null, 0.5, 1.15, 0.5));
         movePassenger(ship);
@@ -36,11 +35,11 @@ public final class ShipPassengerManager {
         UUID playerId = passengers.remove(ship.id());
         seatOffsets.remove(ship.id());
         if (playerId == null) return;
-
         Player player = plugin.getServer().getPlayer(playerId);
         if (player == null || !player.isOnline()) return;
         Location shipPosition = registry.position(ship);
-        Location exit = shipPosition.clone().add(1.5, 1.0, 0.0);
+        double yaw = Math.toRadians(ship.yaw());
+        Location exit = shipPosition.clone().add(1.5 * Math.cos(yaw), 1.0, 1.5 * Math.sin(yaw));
         player.teleport(exit);
     }
 
@@ -89,7 +88,6 @@ public final class ShipPassengerManager {
         if (playerId == null) return;
         Player player = plugin.getServer().getPlayer(playerId);
         if (player == null || !player.isOnline()) return;
-
         Location shipPosition = registry.position(ship);
         Location offset = seatOffsets.getOrDefault(ship.id(), new Location(null, 0.5, 1.15, 0.5));
         double yaw = Math.toRadians(ship.yaw());
