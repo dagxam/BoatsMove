@@ -55,7 +55,7 @@ public final class ShipSystemsManager {
 
     private int count(ShipModel ship, Set<Material> materials) {
         int count = 0;
-        for (ShipBlock block : ship.blocks()) if (materials.contains(block.data().getMaterial())) count++;
+        for (ShipBlock block : ship.blocks()) if (materials.contains(block.blockData().getMaterial())) count++;
         return count;
     }
 
