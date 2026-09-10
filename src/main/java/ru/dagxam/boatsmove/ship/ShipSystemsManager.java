@@ -3,12 +3,17 @@ package ru.dagxam.boatsmove.ship;
 import org.bukkit.Material;
 
 import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 
-/** Derives propulsion and steering integrity directly from the surviving ship blocks. */
+/** Derives propulsion and steering integrity from the surviving logical ship blocks. */
 public final class ShipSystemsManager {
     private final Set<Material> engineMaterials;
     private final Set<Material> steeringMaterials;
+    private final Map<UUID, Integer> baselineEngines = new HashMap<>();
+    private final Map<UUID, Integer> baselineSteering = new HashMap<>();
 
     public ShipSystemsManager(Set<Material> engineMaterials, Set<Material> steeringMaterials) {
         this.engineMaterials = engineMaterials == null ? Set.of() : Set.copyOf(engineMaterials);
@@ -16,51 +21,50 @@ public final class ShipSystemsManager {
     }
 
     public double engineIntegrity(ShipModel ship) {
-        return integrity(ship, engineMaterials);
+        return integrity(ship, engineMaterials, baselineEngines);
     }
 
     public double steeringIntegrity(ShipModel ship) {
-        return integrity(ship, steeringMaterials);
+        return integrity(ship, steeringMaterials, baselineSteering);
     }
 
-    /**
-     * Returns a speed multiplier. A ship without configured engine blocks remains
-     * compatible with simple builds; once engines are installed, damage/flooding
-     * can progressively reduce propulsion and a destroyed engine stops propulsion.
-     */
+    /** A ship with no configured engine blocks keeps legacy propulsion behavior. */
     public double propulsionMultiplier(ShipModel ship) {
-        double integrity = engineIntegrity(ship);
         if (!hasSystem(ship, engineMaterials)) return 1.0;
         double floodPenalty = 1.0 - Math.max(0.0, ship.flooding()) * 0.55;
-        return clamp(integrity * floodPenalty, 0.0, 1.0);
+        return clamp(engineIntegrity(ship) * floodPenalty, 0.0, 1.0);
     }
 
-    /** Returns the turn-rate multiplier from surviving steering blocks. */
+    /** A ship with no configured steering blocks keeps legacy steering behavior. */
     public double steeringMultiplier(ShipModel ship) {
-        double integrity = steeringIntegrity(ship);
         if (!hasSystem(ship, steeringMaterials)) return 1.0;
         double floodPenalty = 1.0 - Math.max(0.0, ship.flooding()) * 0.40;
-        return clamp(integrity * floodPenalty, 0.0, 1.0);
+        return clamp(steeringIntegrity(ship) * floodPenalty, 0.0, 1.0);
     }
 
-    private double integrity(ShipModel ship, Set<Material> materials) {
-        if (!hasSystem(ship, materials)) return 1.0;
-        int total = 0;
-        int operational = 0;
-        for (ShipBlock block : ship.blocks()) {
-            if (!materials.contains(block.data().getMaterial())) continue;
-            total++;
-            operational++;
-        }
-        return total == 0 ? 1.0 : (double) operational / total;
+    public void forget(ShipModel ship) {
+        baselineEngines.remove(ship.id());
+        baselineSteering.remove(ship.id());
+    }
+
+    private double integrity(ShipModel ship, Set<Material> materials, Map<UUID, Integer> baselines) {
+        if (materials.isEmpty()) return 1.0;
+        int current = count(ship, materials);
+        if (current == 0) return baselines.containsKey(ship.id()) ? 0.0 : 1.0;
+        int baseline = baselines.computeIfAbsent(ship.id(), id -> current);
+        return clamp((double) current / Math.max(1, baseline), 0.0, 1.0);
     }
 
     private boolean hasSystem(ShipModel ship, Set<Material> materials) {
-        if (materials.isEmpty()) return false;
+        return !materials.isEmpty() && count(ship, materials) > 0;
+    }
+
+    private int count(ShipModel ship, Set<Material> materials) {
+        int count = 0;
         for (ShipBlock block : ship.blocks()) {
-            if (materials.contains(block.data().getMaterial())) return true;
+            if (materials.contains(block.data().getMaterial())) count++;
         }
-        return false;
+        return count;
     }
 
     private static double clamp(double value, double min, double max) {
