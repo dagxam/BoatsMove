@@ -79,13 +79,10 @@ public final class ShipMovementController {
                 runtime.verticalSpeed(0.0);
             }
 
-            // The passenger is the control seat. Never use ownerId as the pilot
-            // because the owner may already have left the seat.
             Player pilot = activePilot(ship);
             if (pilot == null) {
                 boolean stillControlled = passengers.tick(ship);
                 if (!stillControlled) {
-                    // A Shift dismount or lost pilot immediately kills momentum.
                     runtime.speed(0.0);
                     runtime.verticalSpeed(0.0);
                     runtime.pitch(approach(runtime.pitch(), 0f, 0.35f));
@@ -140,8 +137,6 @@ public final class ShipMovementController {
             }
 
             displays.updatePose(ship, runtime.position(), ship.yaw(), runtime.pitch(), runtime.roll());
-            // If Shift was pressed during this same tick, tick() dismounts and
-            // the next tick is guaranteed to have zero momentum.
             passengers.tick(ship);
             if (!passengers.hasPassenger(ship)) {
                 runtime.speed(0.0);
@@ -150,7 +145,6 @@ public final class ShipMovementController {
         }
     }
 
-    /** The current passenger is the only player allowed to drive the ship. */
     private Player activePilot(ShipModel ship) {
         java.util.UUID id = passengers.passengerId(ship);
         if (id == null) return null;
@@ -160,9 +154,11 @@ public final class ShipMovementController {
         return pilot;
     }
 
+    /** W is the ship's forward input and S is its exact opposite. */
     private Vector forwardDirection(float yaw) {
         double radians = Math.toRadians(yaw);
-        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
+        // Invert the previous vector: the user-facing W/S controls were reversed.
+        return new Vector(Math.sin(radians), 0, -Math.cos(radians));
     }
 
     private void applyBuoyancy(ShipModel ship, ShipRuntimeState runtime, WaterState water) {
