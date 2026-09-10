@@ -56,6 +56,27 @@ public final class ShipPassengerManager implements Listener {
         return clamp(delta, -10.0f, 10.0f);
     }
 
+    /**
+     * Releases the pilot when the ship is being materialized back into blocks.
+     * The player's current position is intentionally preserved: it is the exact
+     * local boarding point, so teleporting to the ship center could put the player
+     * inside the restored hull and leave them stuck.
+     */
+    public void releaseForDeactivation(ShipModel ship) {
+        if (ship == null) return;
+        UUID playerId = passengers.remove(ship.id());
+        ArmorStand seat = seats.remove(ship.id());
+        offsets.remove(ship.id());
+        lastPilotYaw.remove(ship.id());
+
+        Player player = playerId == null ? null : plugin.getServer().getPlayer(playerId);
+        if (player != null && player.isOnline() && player.isInsideVehicle()) {
+            player.leaveVehicle();
+        }
+        if (seat != null && seat.isValid()) seat.remove();
+    }
+
+    /** Legacy/manual dismount: moves the pilot outside the moving ship. */
     public void dismount(ShipModel ship) {
         if (ship == null) return;
         UUID playerId = passengers.remove(ship.id());
