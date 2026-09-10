@@ -79,10 +79,13 @@ public final class ShipMovementController {
                 runtime.verticalSpeed(0.0);
             }
 
+            // The passenger is the control seat. Never use ownerId as the pilot
+            // because the owner may already have left the seat.
             Player pilot = activePilot(ship);
             if (pilot == null) {
                 boolean stillControlled = passengers.tick(ship);
                 if (!stillControlled) {
+                    // A Shift dismount or lost pilot immediately kills momentum.
                     runtime.speed(0.0);
                     runtime.verticalSpeed(0.0);
                     runtime.pitch(approach(runtime.pitch(), 0f, 0.35f));
@@ -113,11 +116,7 @@ public final class ShipMovementController {
             double terrainMultiplier = (water.shallow ? shallowSpeedMultiplier : 1.0) * classSpeed * floodSpeed;
             double forwardLimit = maxSpeed * terrainMultiplier * propulsionMultiplier;
             double reverseLimit = reverseSpeed * terrainMultiplier * propulsionMultiplier;
-
-            // When water-only is enabled, propulsion is disabled as soon as the
-            // hull is no longer over water. This also stops residual momentum.
-            boolean propulsionAllowed = !waterOnly || water.samples > 0;
-            if (!propulsionAllowed || propulsionMultiplier <= 0.001) {
+            if (propulsionMultiplier <= 0.001) {
                 speed = 0.0;
             } else if (input.isForward()) {
                 if (speed < 0.0) speed = Math.min(0.0, speed + acceleration * 1.75);
@@ -141,6 +140,8 @@ public final class ShipMovementController {
             }
 
             displays.updatePose(ship, runtime.position(), ship.yaw(), runtime.pitch(), runtime.roll());
+            // If Shift was pressed during this same tick, tick() dismounts and
+            // the next tick is guaranteed to have zero momentum.
             passengers.tick(ship);
             if (!passengers.hasPassenger(ship)) {
                 runtime.speed(0.0);
@@ -149,6 +150,7 @@ public final class ShipMovementController {
         }
     }
 
+    /** The current passenger is the only player allowed to drive the ship. */
     private Player activePilot(ShipModel ship) {
         java.util.UUID id = passengers.passengerId(ship);
         if (id == null) return null;
@@ -242,11 +244,8 @@ public final class ShipMovementController {
                 {minX, (minZ + maxZ) * 0.5}, {maxX, (minZ + maxZ) * 0.5},
                 {(minX + maxX) * 0.5, (minZ + maxZ) * 0.5}};
         double[] surfaces = new double[5]; boolean[] valid = new boolean[5]; int count = 0;
-        double relativeYaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
-        double cos = Math.cos(relativeYaw), sin = Math.sin(relativeYaw);
         for (int i = 0; i < points.length; i++) {
-            double wx = position.getX() + points[i][0] * cos - points[i][1] * sin;
-            double wz = position.getZ() + points[i][0] * sin + points[i][1] * cos;
+            double wx = position.getX() + points[i][0], wz = position.getZ() + points[i][1];
             int x = (int) Math.floor(wx), z = (int) Math.floor(wz);
             if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
             double surface = findSurface(world, x, z, (int) Math.floor(position.getY() + minY) - 2,
@@ -259,7 +258,7 @@ public final class ShipMovementController {
         average /= count;
         double front = valid[0] ? surfaces[0] : average, rear = valid[1] ? surfaces[1] : average;
         double left = valid[2] ? surfaces[2] : average, right = valid[3] ? surfaces[3] : average;
-        return new WaterState(count, average, front, rear, left, right, isShallow(world, ship, position, minX, maxX, minZ, maxZ));
+        return new WaterState(count, average, front, rear, left, right, isShallow(world, position, minX, maxX, minZ, maxZ));
     }
 
     private double findSurface(World world, int x, int z, int minY, int maxY) {
@@ -267,18 +266,11 @@ public final class ShipMovementController {
         return Double.NaN;
     }
 
-    private boolean isShallow(World world, ShipModel ship, Location pos, int minX, int maxX, int minZ, int maxZ) {
+    private boolean isShallow(World world, Location pos, int minX, int maxX, int minZ, int maxZ) {
         int y = (int) Math.floor(pos.getY());
-        double relativeYaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
-        double cos = Math.cos(relativeYaw), sin = Math.sin(relativeYaw);
-        int stepX = Math.max(1, (maxX - minX) / 3), stepZ = Math.max(1, (maxZ - minZ) / 3);
-        for (int x = minX; x <= maxX; x += stepX) {
-            for (int z = minZ; z <= maxZ; z += stepZ) {
-                double wx = pos.getX() + x * cos - z * sin;
-                double wz = pos.getZ() + x * sin + z * cos;
-                if (world.getBlockAt((int) Math.floor(wx), y - 2, (int) Math.floor(wz)).getType().isSolid()) return true;
-            }
-        }
+        for (int x = minX; x <= maxX; x += Math.max(1, (maxX - minX) / 3))
+            for (int z = minZ; z <= maxZ; z += Math.max(1, (maxZ - minZ) / 3))
+                if (world.getBlockAt((int) Math.floor(pos.getX() + x), y - 2, (int) Math.floor(pos.getZ() + z)).getType().isSolid()) return true;
         return false;
     }
 
