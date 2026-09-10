@@ -17,7 +17,7 @@ import java.util.UUID;
 
 /** Finds a connected ship structure without modifying the world. */
 public final class ShipStructureScanner {
-    // A ship can now connect by face, edge or corner. This supports structures
+    // A ship can connect by face, edge or corner. This supports structures
     // such as diagonal stair/beam chains while still requiring actual block contact.
     private static final int[][] NEIGHBORS = buildNeighbors();
 
@@ -53,7 +53,7 @@ public final class ShipStructureScanner {
 
             Block block = world.getBlockAt(p[0], p[1], p[2]);
             Material type = block.getType();
-            if (type.isAir()) continue;
+            if (!isShipBlock(type)) continue;
             if (forbidden.contains(type)) {
                 return Result.failure("Запрещённый блок в конструкции: " + type);
             }
@@ -71,7 +71,7 @@ public final class ShipStructureScanner {
                 int nx = p[0] + d[0], ny = p[1] + d[1], nz = p[2] + d[2];
                 if (ny < world.getMinHeight() || ny >= world.getMaxHeight()) continue;
                 long nk = pack(nx, ny, nz);
-                if (!visited.contains(nk) && !world.getBlockAt(nx, ny, nz).getType().isAir()) {
+                if (!visited.contains(nk) && isShipBlock(world.getBlockAt(nx, ny, nz).getType())) {
                     queue.addLast(new int[]{nx, ny, nz});
                 }
             }
@@ -81,6 +81,21 @@ public final class ShipStructureScanner {
             return Result.failure("Конструкция слишком маленькая. Минимум: " + minBlocks + " блоков.");
         }
         return Result.success(new ShipSnapshot(UUID.randomUUID(), world, control.getLocation(), blocks));
+    }
+
+    /**
+     * Only real construction blocks participate in the ship flood-fill.
+     * Liquids and other non-solid world blocks must never connect a ship to
+     * the terrain below it.
+     */
+    private boolean isShipBlock(Material type) {
+        if (type == null || type.isAir()) return false;
+        if (type.isLiquid()) return false;
+        if (type == Material.BUBBLE_COLUMN) return false;
+        return switch (type) {
+            case KELP, KELP_PLANT, SEAGRASS, TALL_SEAGRASS -> false;
+            default -> true;
+        };
     }
 
     private ShipBlockState snapshotState(BlockState state) {
