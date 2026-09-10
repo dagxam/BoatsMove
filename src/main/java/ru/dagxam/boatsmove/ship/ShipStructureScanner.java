@@ -115,7 +115,7 @@ public final class ShipStructureScanner {
     }
 
     public record Result(boolean success, String error, ShipSnapshot snapshot) {
-        public static Result success(ShipSnapshot snapshot) { return new Result(true, null, null == null ? null : snapshot); }
+        public static Result success(ShipSnapshot snapshot) { return new Result(true, null, snapshot); }
         public static Result failure(String error) { return new Result(false, error, null); }
     }
 }
