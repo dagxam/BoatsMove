@@ -13,12 +13,14 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
-/** Keeps the pilot attached to an invisible seat without forcing the player's camera rotation. */
+/** Keeps the pilot attached to a fixed local point on the ship without forcing camera rotation. */
 public final class ShipPassengerManager implements Listener {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
     private final Map<UUID, UUID> passengers = new HashMap<>();
     private final Map<UUID, ArmorStand> seats = new HashMap<>();
+    private final Map<UUID, SeatOffset> offsets = new HashMap<>();
+    private final Map<UUID, Float> lastPilotYaw = new HashMap<>();
 
     public ShipPassengerManager(JavaPlugin plugin, ShipRegistry registry) {
         this.plugin = plugin;
@@ -30,7 +32,8 @@ public final class ShipPassengerManager implements Listener {
         if (!player.getWorld().getUID().equals(ship.worldId())) return false;
         if (passengers.containsKey(ship.id())) return false;
 
-        Location seatLocation = seatLocation(ship);
+        SeatOffset offset = captureOffset(ship, player.getLocation());
+        Location seatLocation = seatLocation(ship, offset);
         ArmorStand seat = spawnSeat(seatLocation);
         if (!seat.addPassenger(player)) {
             seat.remove();
@@ -38,13 +41,28 @@ public final class ShipPassengerManager implements Listener {
         }
         passengers.put(ship.id(), player.getUniqueId());
         seats.put(ship.id(), seat);
+        offsets.put(ship.id(), offset);
+        lastPilotYaw.put(ship.id(), player.getYaw());
         return true;
+    }
+
+    /** Returns the mouse yaw delta since the previous movement tick. */
+    public float consumeMouseYawDelta(ShipModel ship, Player player) {
+        if (ship == null || player == null || !hasPassenger(ship)) return 0.0f;
+        float current = player.getYaw();
+        Float previous = lastPilotYaw.put(ship.id(), current);
+        if (previous == null) return 0.0f;
+        float delta = normalizeDelta(current - previous);
+        // Prevent a lag spike or vehicle exit/enter from producing an instant 180° turn.
+        return clamp(delta, -10.0f, 10.0f);
     }
 
     public void dismount(ShipModel ship) {
         if (ship == null) return;
         UUID playerId = passengers.remove(ship.id());
         ArmorStand seat = seats.remove(ship.id());
+        offsets.remove(ship.id());
+        lastPilotYaw.remove(ship.id());
         if (seat != null && seat.isValid()) seat.remove();
         if (playerId == null) return;
 
@@ -66,7 +84,7 @@ public final class ShipPassengerManager implements Listener {
         return ship == null ? null : passengers.get(ship.id());
     }
 
-    /** Keeps the seat attached to the ship; the player camera is never teleported. */
+    /** Keeps the seat at the exact local point where the pilot boarded. */
     public boolean tick(ShipModel ship) {
         if (ship == null || !hasPassenger(ship)) return false;
         UUID playerId = passengers.get(ship.id());
@@ -90,14 +108,11 @@ public final class ShipPassengerManager implements Listener {
             return false;
         }
         if (!seat.getPassengers().contains(player)) {
-            // Minecraft may already have processed the vehicle exit. Treat it
-            // as a real dismount instead of leaving a stale pilot behind.
             removeSeat(ship);
             return false;
         }
 
-        Location target = seatLocation(ship);
-        seat.teleport(target);
+        seat.teleport(seatLocation(ship, offsets.getOrDefault(ship.id(), new SeatOffset(0.5, 1.15, 0.5))));
         return true;
     }
 
@@ -115,6 +130,8 @@ public final class ShipPassengerManager implements Listener {
 
         passengers.remove(shipId);
         seats.remove(shipId);
+        offsets.remove(shipId);
+        lastPilotYaw.remove(shipId);
         if (seat.isValid()) seat.remove();
 
         ShipModel ship = registry.get(shipId);
@@ -130,6 +147,8 @@ public final class ShipPassengerManager implements Listener {
     public void clear(ShipModel ship) {
         if (ship == null) return;
         passengers.remove(ship.id());
+        offsets.remove(ship.id());
+        lastPilotYaw.remove(ship.id());
         removeSeat(ship);
     }
 
@@ -137,6 +156,8 @@ public final class ShipPassengerManager implements Listener {
         for (ArmorStand seat : seats.values()) if (seat != null && seat.isValid()) seat.remove();
         passengers.clear();
         seats.clear();
+        offsets.clear();
+        lastPilotYaw.clear();
     }
 
     private ArmorStand spawnSeat(Location location) {
@@ -152,15 +173,23 @@ public final class ShipPassengerManager implements Listener {
         });
     }
 
-    private Location seatLocation(ShipModel ship) {
+    private SeatOffset captureOffset(ShipModel ship, Location playerLocation) {
+        Location p = registry.position(ship);
+        double relativeYaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
+        double dx = playerLocation.getX() - p.getX();
+        double dz = playerLocation.getZ() - p.getZ();
+        double localX = dx * Math.cos(relativeYaw) + dz * Math.sin(relativeYaw);
+        double localZ = -dx * Math.sin(relativeYaw) + dz * Math.cos(relativeYaw);
+        double localY = playerLocation.getY() - p.getY();
+        return new SeatOffset(clamp(localX, -32.0, 32.0), clamp(localY, -8.0, 8.0), clamp(localZ, -32.0, 32.0));
+    }
+
+    private Location seatLocation(ShipModel ship, SeatOffset offset) {
         Location shipPosition = registry.position(ship);
         double relativeYaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
-        double offsetX = 0.5;
-        double offsetY = 1.15;
-        double offsetZ = 0.5;
-        double worldX = offsetX * Math.cos(relativeYaw) - offsetZ * Math.sin(relativeYaw);
-        double worldZ = offsetX * Math.sin(relativeYaw) + offsetZ * Math.cos(relativeYaw);
-        return shipPosition.clone().add(worldX, offsetY, worldZ);
+        double worldX = offset.x() * Math.cos(relativeYaw) - offset.z() * Math.sin(relativeYaw);
+        double worldZ = offset.x() * Math.sin(relativeYaw) + offset.z() * Math.cos(relativeYaw);
+        return shipPosition.clone().add(worldX, offset.y(), worldZ);
     }
 
     private void removeSeat(ShipModel ship) {
@@ -170,6 +199,19 @@ public final class ShipPassengerManager implements Listener {
 
     private void dismountSilently(ShipModel ship) {
         passengers.remove(ship.id());
+        offsets.remove(ship.id());
+        lastPilotYaw.remove(ship.id());
         removeSeat(ship);
     }
+
+    private static float normalizeDelta(float delta) {
+        while (delta > 180.0f) delta -= 360.0f;
+        while (delta < -180.0f) delta += 360.0f;
+        return delta;
+    }
+
+    private static float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
+    private static double clamp(double value, double min, double max) { return Math.max(min, Math.min(max, value)); }
+
+    private record SeatOffset(double x, double y, double z) { }
 }
