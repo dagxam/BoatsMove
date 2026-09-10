@@ -8,7 +8,7 @@ import org.bukkit.entity.Player;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.util.Vector;
 
-/** Boat-like movement controller with multi-point buoyancy, collision and damaged systems. */
+/** Boat-like movement controller with rigid ship displays, collision and damaged systems. */
 public final class ShipMovementController {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
@@ -79,11 +79,16 @@ public final class ShipMovementController {
                 runtime.verticalSpeed(0.0);
             }
 
-            Player pilot = plugin.getServer().getPlayer(ship.ownerId());
-            if (pilot == null || !pilot.isOnline() || !pilot.getWorld().getUID().equals(ship.worldId())) {
-                applyDrag(runtime);
+            Player pilot = activePilot(ship);
+            if (pilot == null) {
+                boolean stillControlled = passengers.tick(ship);
+                if (!stillControlled) {
+                    runtime.speed(0.0);
+                    runtime.verticalSpeed(0.0);
+                } else {
+                    applyDrag(runtime);
+                }
                 displays.updatePose(ship, runtime.position(), ship.yaw(), runtime.pitch(), runtime.roll());
-                passengers.tick(ship);
                 continue;
             }
 
@@ -107,23 +112,22 @@ public final class ShipMovementController {
             double forwardLimit = maxSpeed * terrainMultiplier * propulsionMultiplier;
             double reverseLimit = reverseSpeed * terrainMultiplier * propulsionMultiplier;
             if (propulsionMultiplier <= 0.001) {
-                speed *= drag;
-                if (Math.abs(speed) < 0.001) speed = 0.0;
+                speed = 0.0;
             } else if (input.isForward()) {
+                if (speed < 0.0) speed = Math.min(0.0, speed + acceleration * 1.75);
                 speed = Math.min(forwardLimit, speed + acceleration * terrainMultiplier * propulsionMultiplier);
             } else if (input.isBackward()) {
+                if (speed > 0.0) speed = Math.max(0.0, speed - acceleration * 1.75);
                 speed = Math.max(-reverseLimit, speed - acceleration * terrainMultiplier * propulsionMultiplier);
             } else {
                 speed *= drag;
                 if (Math.abs(speed) < 0.001) speed = 0.0;
             }
 
-            // Damaged engines cannot sustain existing momentum indefinitely.
             if (propulsionMultiplier < 0.999) speed *= 0.985 + propulsionMultiplier * 0.015;
             runtime.speed(speed);
             if (Math.abs(speed) >= 0.0001) {
-                Vector direction = new Vector(-Math.sin(Math.toRadians(ship.yaw())), 0,
-                        Math.cos(Math.toRadians(ship.yaw())));
+                Vector direction = forwardDirection(ship.yaw());
                 Location current = runtime.position();
                 Location next = current.clone().add(direction.getX() * speed, 0, direction.getZ() * speed);
                 if (collision.canMove(ship, current, next)) runtime.position(next);
@@ -133,6 +137,21 @@ public final class ShipMovementController {
             displays.updatePose(ship, runtime.position(), ship.yaw(), runtime.pitch(), runtime.roll());
             passengers.tick(ship);
         }
+    }
+
+    /** The current passenger is the only player allowed to drive the ship. */
+    private Player activePilot(ShipModel ship) {
+        java.util.UUID id = passengers.passengerId(ship);
+        if (id == null) return null;
+        Player pilot = plugin.getServer().getPlayer(id);
+        if (pilot == null || !pilot.isOnline()) return null;
+        if (!pilot.getWorld().getUID().equals(ship.worldId())) return null;
+        return pilot;
+    }
+
+    private Vector forwardDirection(float yaw) {
+        double radians = Math.toRadians(yaw);
+        return new Vector(-Math.sin(radians), 0, Math.cos(radians));
     }
 
     private void applyBuoyancy(ShipModel ship, ShipRuntimeState runtime, WaterState water) {
