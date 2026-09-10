@@ -39,7 +39,10 @@ public final class ShipPassengerManager {
         if (player == null || !player.isOnline()) return;
         Location shipPosition = registry.position(ship);
         double yaw = Math.toRadians(ship.yaw());
-        Location exit = shipPosition.clone().add(1.5 * Math.cos(yaw), 1.0, 1.5 * Math.sin(yaw));
+        // Minecraft forward is (-sin(yaw), cos(yaw)); exit behind the ship.
+        Location exit = shipPosition.clone().add(-1.5 * Math.sin(yaw), 1.0, -1.5 * Math.cos(yaw));
+        exit.setYaw(player.getLocation().getYaw());
+        exit.setPitch(player.getLocation().getPitch());
         player.teleport(exit);
     }
 
@@ -90,7 +93,7 @@ public final class ShipPassengerManager {
         if (player == null || !player.isOnline()) return;
         Location shipPosition = registry.position(ship);
         Location offset = seatOffsets.getOrDefault(ship.id(), new Location(null, 0.5, 1.15, 0.5));
-        double yaw = Math.toRadians(ship.yaw());
+        double yaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
         double worldX = offset.getX() * Math.cos(yaw) - offset.getZ() * Math.sin(yaw);
         double worldZ = offset.getX() * Math.sin(yaw) + offset.getZ() * Math.cos(yaw);
         Location seat = shipPosition.clone().add(worldX, offset.getY(), worldZ);
