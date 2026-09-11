@@ -29,7 +29,9 @@ public final class BoatsMovePlugin extends JavaPlugin implements CommandExecutor
         movementController=new ShipMovementController(this,shipRegistry,displayManager,passengerManager,
                 getConfig().getDouble("movement.max-speed",.65),getConfig().getDouble("movement.acceleration",.035),
                 getConfig().getDouble("movement.reverse-speed",.28),turnSpeed,getConfig().getDouble("movement.drag",.90),getConfig().getBoolean("movement.water-only",true));
-        activationService=createActivationService(); persistence=new ShipPersistenceManager(this,shipRegistry);
+        activationService=createActivationService();
+        passengerManager.activationService(activationService);
+        persistence=new ShipPersistenceManager(this,shipRegistry);
         controlMenu=new ShipControlMenuManager(this,shipRegistry,activationService,passengerManager);
         getServer().getPluginManager().registerEvents(controlMenu,this); controlMenu.registerRecipe();
         storage=new VirtualChestManager(shipRegistry); getServer().getPluginManager().registerEvents(storage,this);
