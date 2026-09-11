@@ -121,6 +121,10 @@ public final class ShipMovementController {
             } else if (input.isBackward()) {
                 if (speed > 0.0) speed = Math.max(0.0, speed - acceleration * 1.75);
                 speed = Math.max(-reverseLimit, speed - acceleration * terrainMultiplier * propulsionMultiplier);
+            } else if (input.isLeft() || input.isRight()) {
+                // Steering also carries the ship forward, so A/D does not only rotate in place.
+                if (speed < 0.0) speed = Math.min(0.0, speed + acceleration * 1.75);
+                speed = Math.min(forwardLimit, speed + acceleration * terrainMultiplier * propulsionMultiplier);
             } else {
                 speed *= drag;
                 if (Math.abs(speed) < 0.001) speed = 0.0;
