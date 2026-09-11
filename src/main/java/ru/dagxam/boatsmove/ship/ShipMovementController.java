@@ -79,8 +79,8 @@ public final class ShipMovementController {
                 runtime.verticalSpeed(0.0);
             }
 
-            Player pilot = activePilot(ship);
-            if (pilot == null) {
+            if (!passengers.steer(ship)) {
+                if (ship.state() != ShipState.ACTIVE) continue;
                 boolean stillControlled = passengers.tick(ship);
                 if (!stillControlled) {
                     runtime.speed(0.0);
@@ -93,6 +93,9 @@ public final class ShipMovementController {
                 displays.updatePose(ship, runtime.position(), ship.yaw(), runtime.pitch(), runtime.roll());
                 continue;
             }
+
+            Player pilot = activePilot(ship);
+            if (pilot == null) continue;
 
             Input input = pilot.getCurrentInput();
             double speed = runtime.speed();
