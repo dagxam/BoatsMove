@@ -17,24 +17,21 @@ import java.util.UUID;
 public final class ShipPassengerManager implements Listener {
     private final JavaPlugin plugin;
     private final ShipRegistry registry;
-    private final ShipActivationService activationService;
+    private ShipActivationService activationService;
     private final double turnSpeed;
     private final Map<UUID, UUID> passengers = new HashMap<>();
     private final Map<UUID, ArmorStand> seats = new HashMap<>();
     private final Map<UUID, SeatAnchor> anchors = new HashMap<>();
 
     public ShipPassengerManager(JavaPlugin plugin, ShipRegistry registry, double turnSpeed) {
-        this(plugin, registry, null, turnSpeed);
-    }
-
-    public ShipPassengerManager(JavaPlugin plugin, ShipRegistry registry, ShipActivationService activationService, double turnSpeed) {
         this.plugin = plugin;
         this.registry = registry;
-        this.activationService = activationService;
         this.turnSpeed = Math.max(0.01, turnSpeed);
     }
 
-    public void activationService(ShipActivationService activationService) { }
+    public void activationService(ShipActivationService activationService) {
+        this.activationService = activationService;
+    }
 
     public boolean board(ShipModel ship, Player player) {
         if (ship == null || player == null || ship.state() != ShipState.ACTIVE) return false;
@@ -117,15 +114,14 @@ public final class ShipPassengerManager implements Listener {
     }
 
     private void requestDeactivation(ShipModel ship) {
-        // Deactivation is performed synchronously on the server tick. We release
-        // the passenger only after the activation service has safely restored the hull.
         if (activationService == null) {
             dismount(ship);
             return;
         }
         ShipActivationService.Result result = activationService.deactivate(ship);
         if (!result.success()) {
-            Player player = plugin.getServer().getPlayer(passengerId(ship));
+            UUID playerId = passengerId(ship);
+            Player player = playerId == null ? null : plugin.getServer().getPlayer(playerId);
             if (player != null && player.isOnline()) player.sendMessage(result.message());
         }
     }
