@@ -206,7 +206,8 @@ public final class ShipPassengerManager implements Listener {
         double worldX = anchor.x() * Math.cos(yaw) - anchor.z() * Math.sin(yaw);
         double worldZ = anchor.x() * Math.sin(yaw) + anchor.z() * Math.cos(yaw);
         Location result = origin.clone().add(worldX, anchor.y(), worldZ);
-        result.setYaw(0.0f);
+        // The seat rotates with the ship, while the client may still freely rotate the head/camera.
+        result.setYaw(ship.yaw());
         result.setPitch(0.0f);
         return result;
     }
