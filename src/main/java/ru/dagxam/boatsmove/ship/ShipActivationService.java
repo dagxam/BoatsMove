@@ -43,6 +43,10 @@ public final class ShipActivationService {
         ShipStructureScanner.ShipSnapshot snapshot = scan.snapshot();
         if (!snapshot.world().equals(control.getWorld())) return Result.failure("Мир контрольного блока изменился во время активации.");
         ShipModel ship = new ShipModel(snapshot.id(), player.getUniqueId(), snapshot.world(), snapshot.origin(), snapshot.blocks());
+        // Establish the activation heading before spawning displays. This prevents
+        // the first display pose from being interpreted as an unwanted rotation.
+        ship.originYaw(player.getYaw());
+        ship.yaw(player.getYaw());
         ship.state(ShipState.ACTIVATING);
         for (ShipBlock block : snapshot.blocks()) {
             Block worldBlock = worldBlock(snapshot, block);
@@ -100,9 +104,6 @@ public final class ShipActivationService {
         }
 
         ship.state(ShipState.DEACTIVATING);
-        // Release the pilot before materializing the real blocks. His current
-        // location is the saved boarding side; teleporting him to ship center
-        // can put him inside the restored hull and make movement impossible.
         if (passengerManager != null) passengerManager.releaseForDeactivation(ship);
 
         VirtualChestManager storage = registry.storageManager();
@@ -124,7 +125,6 @@ public final class ShipActivationService {
         }
     }
 
-    /** Uses the ship's logical yaw, not the runtime Location yaw, which is not kept in sync with mouse steering. */
     private int nearestQuarterTurn(ShipModel ship) {
         float relative = normalizeYaw(ship.yaw() - ship.origin().getYaw());
         return Math.floorMod(Math.round(relative / 90.0f), 4);
@@ -176,8 +176,7 @@ public final class ShipActivationService {
     }
 
     private org.bukkit.block.data.BlockData rotatedBlockData(ShipBlock block, int quarterTurns) {
-        org.bukkit.block.data.BlockData data = block.blockData();
-        data = data.clone();
+        org.bukkit.block.data.BlockData data = block.blockData().clone();
         switch (rotationIndex(quarterTurns)) {
             case 1 -> data.rotate(StructureRotation.CLOCKWISE_90);
             case 2 -> data.rotate(StructureRotation.CLOCKWISE_180);
@@ -187,11 +186,6 @@ public final class ShipActivationService {
         return data;
     }
 
-    /**
-     * Restores the hull in three strict phases: block data, TileState, inventories.
-     * If any phase fails, all destination blocks are rolled back to their exact
-     * pre-restore BlockData so deactivation never leaves a half-materialized ship.
-     */
     private void restoreShip(ShipModel ship, World world, org.bukkit.Location origin, int quarterTurns) {
         Map<String, Block> targets = new HashMap<>();
         Map<String, org.bukkit.block.data.BlockData> originalData = new HashMap<>();
@@ -210,9 +204,7 @@ public final class ShipActivationService {
                 Block target = targetFor(world, origin, block, quarterTurns);
                 org.bukkit.block.data.BlockData expected = rotatedBlockData(block, quarterTurns);
                 target.setBlockData(expected, false);
-                if (!target.getBlockData().matches(expected)) {
-                    throw new IllegalStateException("BlockData не восстановился в " + target.getLocation());
-                }
+                if (!target.getBlockData().matches(expected)) throw new IllegalStateException("BlockData не восстановился в " + target.getLocation());
             }
 
             for (ShipBlock block : ship.blocks()) {
@@ -229,16 +221,12 @@ public final class ShipActivationService {
                 ShipBlockState snapshot = block.state();
                 if (snapshot == null || !snapshot.hasInventory()) continue;
                 Block target = targetFor(world, origin, block, quarterTurns);
-                if (!(target.getState() instanceof org.bukkit.block.Container)) {
-                    throw new IllegalStateException("Не удалось восстановить контейнер " + target.getLocation());
-                }
+                if (!(target.getState() instanceof org.bukkit.block.Container)) throw new IllegalStateException("Не удалось восстановить контейнер " + target.getLocation());
             }
         } catch (RuntimeException ex) {
             for (Map.Entry<String, Block> entry : targets.entrySet()) {
                 org.bukkit.block.data.BlockData data = originalData.get(entry.getKey());
-                if (data != null) {
-                    try { entry.getValue().setBlockData(data, false); } catch (RuntimeException ignored) { }
-                }
+                if (data != null) try { entry.getValue().setBlockData(data, false); } catch (RuntimeException ignored) { }
             }
             throw new IllegalStateException("Ошибка полной материализации: " + ex.getMessage(), ex);
         }
