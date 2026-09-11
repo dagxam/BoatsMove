@@ -80,7 +80,7 @@ public final class ShipPassengerManager implements Listener {
     public boolean hasPassenger(ShipModel ship) { return ship != null && passengers.containsKey(ship.id()); }
     public UUID passengerId(ShipModel ship) { return ship == null ? null : passengers.get(ship.id()); }
 
-    /** Applies A/D steering before propulsion is calculated for this tick. */
+    /** A/D only changes the course. It never adds propulsion by itself. */
     public boolean steer(ShipModel ship) {
         if (ship == null || !hasPassenger(ship)) return false;
         UUID playerId = passengers.get(ship.id());
@@ -97,7 +97,7 @@ public final class ShipPassengerManager implements Listener {
         return true;
     }
 
-    /** Keeps the player's body on the exact same upper hull face; camera rotation is left to the client. */
+    /** Keeps the player's body on the exact same upper hull face without forcing body/camera rotation. */
     public boolean tick(ShipModel ship) {
         if (ship == null || !hasPassenger(ship)) return false;
         UUID playerId = passengers.get(ship.id());
@@ -205,9 +205,9 @@ public final class ShipPassengerManager implements Listener {
         double yaw = Math.toRadians(ship.yaw() - ship.origin().getYaw());
         double worldX = anchor.x() * Math.cos(yaw) - anchor.z() * Math.sin(yaw);
         double worldZ = anchor.x() * Math.sin(yaw) + anchor.z() * Math.cos(yaw);
+        // Keep the seat's yaw at the activation yaw. Only its position follows the ship's course.
         Location result = origin.clone().add(worldX, anchor.y(), worldZ);
-        // The seat rotates with the ship, while the client may still freely rotate the head/camera.
-        result.setYaw(ship.yaw());
+        result.setYaw(ship.origin().getYaw());
         result.setPitch(0.0f);
         return result;
     }
