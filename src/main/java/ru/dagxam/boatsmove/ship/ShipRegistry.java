@@ -2,6 +2,7 @@ package ru.dagxam.boatsmove.ship;
 
 import org.bukkit.Location;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -19,13 +20,8 @@ public final class ShipRegistry {
         runtime.put(ship.id(), new ShipRuntimeState(ship.origin()));
     }
 
-    public ShipModel get(UUID id) {
-        return ships.get(id);
-    }
-
-    public ShipRuntimeState runtime(UUID id) {
-        return runtime.get(id);
-    }
+    public ShipModel get(UUID id) { return ships.get(id); }
+    public ShipRuntimeState runtime(UUID id) { return runtime.get(id); }
 
     public Location position(ShipModel ship) {
         ShipRuntimeState state = runtime.get(ship.id());
@@ -36,30 +32,17 @@ public final class ShipRegistry {
         runtime.computeIfAbsent(ship.id(), ignored -> new ShipRuntimeState(position)).position(position);
     }
 
-    public void storageManager(VirtualChestManager storageManager) {
-        this.storageManager = storageManager;
-    }
+    public void storageManager(VirtualChestManager storageManager) { this.storageManager = storageManager; }
+    public VirtualChestManager storageManager() { return storageManager; }
+    public void removeRuntime(UUID id) { runtime.remove(id); }
+    public void unregister(UUID id) { ships.remove(id); runtime.remove(id); }
 
-    public VirtualChestManager storageManager() {
-        return storageManager;
-    }
-
-    public void removeRuntime(UUID id) {
-        runtime.remove(id);
-    }
-
-    public void unregister(UUID id) {
-        ships.remove(id);
-        runtime.remove(id);
-    }
-
+    /** Stable snapshot: deactivation may unregister the current ship during movement tick. */
     public Collection<ShipModel> all() {
-        return Collections.unmodifiableCollection(ships.values());
+        return Collections.unmodifiableList(new ArrayList<>(ships.values()));
     }
 
-    public int size() {
-        return ships.size();
-    }
+    public int size() { return ships.size(); }
 
     public void clearRuntimeState() {
         ships.clear();
